@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #fff;
+  --primary: #2563eb;
+  --primary-foreground: #fff;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --navy: #0b1f3a;
+}
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-navy: var(--navy);
+  --font-sans: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased; }
+button, select, a { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled), select { cursor: pointer; }
+:focus-visible { outline: 3px solid #3b82f6; outline-offset: 3px; }
+.skip-link { position: fixed; top: -100px; left: 16px; z-index: 100; border-radius: 8px; background: white; color: #0b1f3a; padding: 12px 20px; }
+.skip-link:focus { top: 12px; }
+.course-icon { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; }
+.course-blue { background: #eff6ff; color: #2563eb; }
+.course-violet { background: #f5f3ff; color: #7c3aed; }
+.course-teal { background: #f0fdfa; color: #0f766e; }
+.dashboard-page { animation: dashboard-in 200ms ease-out; }
+.dashboard-card { transition: border-color 160ms ease, box-shadow 160ms ease; }
+.dashboard-card:hover { border-color: #bfdbfe; box-shadow: 0 4px 12px rgb(15 23 42 / .05); }
+.dashboard-details summary { cursor: pointer; border-radius: 4px; overflow-wrap: anywhere; transition: color 160ms ease; }
+.dashboard-details summary:hover { color: #1d4ed8; }
+.dashboard-details[open] > summary { color: #1d4ed8; }
+.dashboard-page p, .dashboard-page h2, .dashboard-page h3 { overflow-wrap: anywhere; }
+@keyframes dashboard-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.drawer-panel[data-state="open"] { animation: drawer-in 220ms ease-out; }
+.drawer-panel[data-state="closed"] { animation: drawer-out 180ms ease-in; }
+.drawer-overlay[data-state="open"] { animation: overlay-in 220ms ease-out; }
+.drawer-overlay[data-state="closed"] { animation: overlay-out 180ms ease-in; }
+@keyframes drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes drawer-out { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

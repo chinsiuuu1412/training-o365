@@ -1,0 +1,9 @@
+"use client";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { useReducedMotion } from "motion/react";
+import type { DashboardData } from "@/mocks/services/dashboard";
+export function ProgressChart({ classes }: { classes: DashboardData["classes"] }) {
+  const reduced = useReducedMotion();
+  const data = classes.map(c => ({ name: c.code, "Điểm danh": c.attendance, "Quiz": c.quiz }));
+  return <><div className="h-[235px] w-full" role="img" aria-label="Biểu đồ tiến độ điểm danh và Quiz trung bình từng lớp. Số liệu chi tiết có trong bảng tổng quan lớp học bên dưới."><ResponsiveContainer width="100%" height="100%" minWidth={0}><BarChart data={data} barGap={6} margin={{ top: 8, right: 4, bottom: 0, left: -25 }}><CartesianGrid strokeDasharray="3 5" vertical={false} stroke="#e2e8f0" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 11 }} dy={8} /><YAxis domain={[0,100]} ticks={[0,25,50,75,100]} axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 11 }} tickFormatter={v => `${v}%`} /><Tooltip cursor={{ fill: "#f1f5f9" }} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12 }} formatter={value => `${value}%`} /><Bar name="Điểm danh" dataKey="Điểm danh" fill="#3b82f6" radius={[4,4,0,0]} maxBarSize={25} isAnimationActive={!reduced} /><Bar name="Quiz" dataKey="Quiz" fill="#14b8a6" radius={[4,4,0,0]} maxBarSize={25} isAnimationActive={!reduced} /></BarChart></ResponsiveContainer></div><div className="mt-4 flex justify-center gap-5 text-xs text-muted-foreground"><span className="flex items-center gap-2"><span className="size-2 rounded-sm bg-blue-500" />Điểm danh</span><span className="flex items-center gap-2"><span className="size-2 rounded-sm bg-teal-500" />Quiz</span></div></>;
+}
