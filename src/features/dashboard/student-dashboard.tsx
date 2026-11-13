@@ -10,10 +10,10 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/states";
 import { DashboardPage, DemoDate, formatDate, LessonList, NotificationList } from "./dashboard-parts";
 
-export function StudentDashboard({ data }: { data: StudentDashboardData }) {
+export function StudentDashboard({ data, displayName = "An" }: { data: StudentDashboardData; displayName?: string }) {
   const draft = data.continueLearning;
   return <DashboardPage>
-    <PageHeader eyebrow="Không gian học tập" title="Hành trình học tập của bạn" description="Chào An, tiếp tục bài đang làm và chuẩn bị cho những buổi học tiếp theo." />
+    <PageHeader eyebrow="Không gian học tập" title="Hành trình học tập của bạn" description={`Chào ${displayName}, tiếp tục bài đang làm và chuẩn bị cho những buổi học tiếp theo.`} />
     <DemoDate referenceTime={data.referenceTime} />
     <Card className="border-blue-100 bg-blue-50/60 p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold text-navy">Tiếp tục học</h2>{draft && <StatusBadge status="inProgress" />}</div>
@@ -29,7 +29,7 @@ export function StudentDashboard({ data }: { data: StudentDashboardData }) {
       <StatCard label="Assignment đang làm" value={draft ? 1 : 0} detail="Bài được lưu gần nhất để tiếp tục" icon={FilePenLine} tone="teal" />
     </div>
     <section aria-labelledby="registered-classes"><h2 id="registered-classes" className="mb-4 text-xl font-semibold">Lớp học đã đăng ký</h2>
-      {data.classes.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{data.classes.map(course => <ClassCard key={course.id} course={course} registered />)}</div> : <EmptyState title="Chưa có lớp đã đăng ký" description="Lớp được duyệt và còn thời hạn sẽ xuất hiện tại đây." />}
+      {data.classes.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{data.classes.map(course => <ClassCard key={course.id} course={course} registered href={`/student/classes/${course.id}`} />)}</div> : <EmptyState title="Chưa có lớp đã đăng ký" description="Lớp được duyệt và còn thời hạn sẽ xuất hiện tại đây." />}
     </section>
     <section aria-labelledby="learning-progress"><h2 id="learning-progress" className="mb-4 text-xl font-semibold">Tiến độ học tập</h2>
       {data.classes.length ? <div className="grid items-start gap-6 lg:grid-cols-2">

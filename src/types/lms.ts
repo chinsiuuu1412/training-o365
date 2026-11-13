@@ -1,12 +1,15 @@
 export type Role = "admin" | "teacher" | "student";
-export interface User { id: string; name: string; role: Role; initials: string }
-export interface Class { id: string; name: string; code: string; teacherId: string; capacity: number; totalLessons: number; expiresAt: string; color: string }
-export interface Enrollment { classId: string; studentId: string; status: "approved" | "pending" }
-export interface Lesson { id: string; classId: string; name: string; completed: boolean }
-export interface Attendance { lessonId: string; studentId: string; recorded: boolean }
+export interface User { id: string; name: string; role: Role; initials: string; email?: string; phone?: string; status?: "active" | "suspended"; statusReason?: string }
+export interface Class { id: string; name: string; code: string; teacherId: string; capacity: number; totalLessons: number; expiresAt: string; color: string; description?: string; attendanceThreshold?: number; quizThreshold?: number }
+export interface Enrollment { classId: string; studentId: string; status: "approved" | "pending" | "declined" | "cancelled" | "removed"; declineCount?: number; retryAt?: string; lastReason?: string; declineReason?: string }
+export interface LessonDraft { title: string; description: string; startsAt: string; endsAt: string; materialIds: string[]; attendanceCode: string }
+export interface Lesson { id: string; classId: string; name: string; completed: boolean; description?: string; materialIds?: string[]; attendanceCode?: string; draft?: LessonDraft }
+export interface Attendance { lessonId: string; studentId: string; recorded: boolean; failures?: number; absenceReason?: string; recordedAt?: string; recordedBy?: string; reason?: string }
 export interface Quiz { id: string; classId: string; kind: "test" | "assignment"; passingScore: number; title: string; opensAt: string; dueAt: string; timeLimitMinutes: number }
 export interface QuizAttempt { quizId: string; studentId: string; score: number; valid: boolean }
-export interface ApprovalRequest { id: string; classId: string; senderId: string; kind: "schedule" | "enrollment" | "test-retake"; quizId?: string; title: string; description: string; createdAt: string; status: "waiting" | "approved" | "declined" }
+export interface ApprovalRequest { id: string; classId: string; senderId: string; kind: "schedule" | "enrollment" | "test-retake" | "teacher-leave" | "attendance-correction" | "absence"; quizId?: string; lessonId?: string; studentId?: string; proposedStartsAt?: string; proposedEndsAt?: string; proposalTitle?: string; proposalDescription?: string; proposalMaterialIds?: string[]; proposalAttendanceCode?: string; leaveRequestId?: string; title: string; description: string; createdAt: string; status: "waiting" | "approved" | "declined" | "cancelled"; resolutionReason?: string; resolvedAt?: string }
 export interface Notification { id: string; recipientId: string; classId?: string; title: string; description: string; createdAt: string; href: string }
-export interface Schedule { id: string; lessonId: string; startsAt: string; endsAt: string; status: "pending" | "approved" | "confirmed" | "cancelled" }
+export interface Schedule { id: string; lessonId: string; startsAt: string; endsAt: string; status: "draft" | "declined" | "pending" | "approved" | "confirmed" | "cancelled" }
 export interface AssignmentDraft { studentId: string; quizId: string; answeredQuestions: number; totalQuestions: number; remainingMinutes: number; updatedAt: string }
+export interface Material { id: string; classId: string; lessonId?: string; title: string; kind: "document" | "video"; expiresAt?: string }
+export interface LmsState { referenceTime: string; users: User[]; classes: Class[]; enrollments: Enrollment[]; lessons: Lesson[]; attendance: Attendance[]; quizzes: Quiz[]; attempts: QuizAttempt[]; requests: ApprovalRequest[]; notifications: Notification[]; schedules: Schedule[]; assignmentDrafts: AssignmentDraft[]; materials: Material[] }

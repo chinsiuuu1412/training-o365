@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { Bell, CalendarDays, ClipboardCheck } from "lucide-react";
 import type { Notification } from "@/types/lms";
 import type { RequestRow, UpcomingLesson } from "@/mocks/services/dashboard";
@@ -28,18 +29,17 @@ export function RequestList({ title, requests }: { title: string; requests: Requ
       <div className="mt-3 space-y-3 rounded-xl bg-slate-50 p-4 text-sm leading-6">
         <StatusBadge status="waiting" /><p>{request.description}</p>
         <p className="text-xs text-muted-foreground">Gửi lúc {formatDate(request.createdAt)}{request.quiz ? ` · ${request.quiz.title}` : ""}</p>
-        <Button disabled size="sm" variant="outline">Phê duyệt · Chưa hỗ trợ</Button>
-        <p className="text-xs text-muted-foreground">Bản demo chỉ xem chi tiết; yêu cầu giữ nguyên trạng thái chờ duyệt.</p>
+        {request.kind === "enrollment" ? <Button size="sm" variant="outline" asChild><Link href={`/teacher/classes/${request.classId}`}>Xử lý đăng ký trong lớp</Link></Button> : request.kind === "schedule" ? <Button size="sm" variant="outline" asChild><Link href="/admin/requests">Xử lý lịch học</Link></Button> : <><Button disabled size="sm" variant="outline">Phê duyệt · Chưa hỗ trợ</Button><p className="text-xs text-muted-foreground">Test retake chưa triển khai.</p></>}
       </div>
     </details>)}</div> : <EmptyState title="Không có yêu cầu chờ duyệt" description="Yêu cầu mới của lớp được chọn sẽ xuất hiện tại đây." />}
   </Card>;
 }
 
-export function LessonList({ lessons }: { lessons: UpcomingLesson[] }) {
-  return <Card className="min-w-0 p-5 sm:p-6"><h2 className="text-lg font-semibold">Buổi học sắp tới</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">Chỉ hiển thị lịch đã được giảng viên xác nhận · UTC+7</p>
+export function LessonList({ lessons, role = "student" }: { lessons: UpcomingLesson[]; role?: "teacher" | "student" }) {
+  return <Card className="min-w-0 p-5 sm:p-6"><h2 className="text-lg font-semibold">Buổi học sắp tới</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">Lịch Admin đã duyệt · Chờ xác nhận nếu chưa được giảng viên xác nhận · UTC+7</p>
     {lessons.length ? <div className="mt-4 divide-y divide-border">{lessons.map(item => <details key={item.id} className="dashboard-details py-4 first:pt-0">
       <summary className="text-sm font-medium">{item.course.name} · {item.lesson.name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{formatDate(item.startsAt)}</span></summary>
-      <div className="mt-3 space-y-3 rounded-xl bg-slate-50 p-4 text-sm leading-6"><StatusBadge status="confirmed" /><p>Bắt đầu: {formatDate(item.startsAt)}<br />Kết thúc: {formatDate(item.endsAt)}</p><Button disabled size="sm" variant="outline">Vào buổi học · Chưa hỗ trợ</Button><p className="text-xs text-muted-foreground">Bản demo chưa mở phòng học hoặc ghi nhận điểm danh.</p></div>
+      <div className="mt-3 space-y-3 rounded-xl bg-slate-50 p-4 text-sm leading-6"><StatusBadge status={item.status === "approved" ? "approved" : "confirmed"} />{item.status === "approved" && <p>Chờ giảng viên xác nhận · Chưa mở điểm danh</p>}<p>Bắt đầu: {formatDate(item.startsAt)}<br />Kết thúc: {formatDate(item.endsAt)}</p><Button asChild size="sm" variant="outline"><Link href={`/${role}/classes/${item.classId}?tab=lessons`}>Xem buổi học và điểm danh mô phỏng</Link></Button></div>
     </details>)}</div> : <EmptyState title="Chưa có buổi học sắp tới" description="Lịch chờ duyệt chưa xuất hiện trong danh sách buổi học đã xác nhận." />}
   </Card>;
 }

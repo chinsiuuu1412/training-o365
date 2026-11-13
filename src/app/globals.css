@@ -39,6 +39,9 @@ button:not(:disabled), select { cursor: pointer; }
 .dashboard-details summary:hover { color: #1d4ed8; }
 .dashboard-details[open] > summary { color: #1d4ed8; }
 .dashboard-page p, .dashboard-page h2, .dashboard-page h3 { overflow-wrap: anywhere; }
+.form-control { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: white; font-size: 14px; font-weight: 400; color: var(--foreground); }
+.management-dialog { animation: overlay-in 180ms ease-out; }
+.management-content { overflow-wrap: anywhere; }
 @keyframes dashboard-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .drawer-panel[data-state="open"] { animation: drawer-in 220ms ease-out; }
 .drawer-panel[data-state="closed"] { animation: drawer-out 180ms ease-in; }
