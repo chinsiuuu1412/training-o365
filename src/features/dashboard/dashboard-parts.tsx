@@ -29,7 +29,7 @@ export function RequestList({ title, requests }: { title: string; requests: Requ
       <div className="mt-3 space-y-3 rounded-xl bg-slate-50 p-4 text-sm leading-6">
         <StatusBadge status="waiting" /><p>{request.description}</p>
         <p className="text-xs text-muted-foreground">Gửi lúc {formatDate(request.createdAt)}{request.quiz ? ` · ${request.quiz.title}` : ""}</p>
-        {request.kind === "enrollment" ? <Button size="sm" variant="outline" asChild><Link href={`/teacher/classes/${request.classId}`}>Xử lý đăng ký trong lớp</Link></Button> : request.kind === "schedule" ? <Button size="sm" variant="outline" asChild><Link href="/admin/requests">Xử lý lịch học</Link></Button> : <><Button disabled size="sm" variant="outline">Phê duyệt · Chưa hỗ trợ</Button><p className="text-xs text-muted-foreground">Test retake chưa triển khai.</p></>}
+        {request.kind === "enrollment" ? <Button size="sm" variant="outline" asChild><Link href={`/teacher/classes/${request.classId}`}>Xử lý đăng ký trong lớp</Link></Button> : request.kind === "schedule" ? <Button size="sm" variant="outline" asChild><Link href="/admin/requests">Xử lý lịch học</Link></Button> : <Button asChild size="sm" variant="outline"><Link href={`/teacher/classes/${request.classId}?tab=quizzes`}>Xử lý yêu cầu làm lại Test</Link></Button>}
       </div>
     </details>)}</div> : <EmptyState title="Không có yêu cầu chờ duyệt" description="Yêu cầu mới của lớp được chọn sẽ xuất hiện tại đây." />}
   </Card>;

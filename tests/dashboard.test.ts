@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getDashboard, getStudentProgress } from "../src/mocks/services/dashboard.ts";
 import * as service from "../src/mocks/services/dashboard.ts";
+import { baseState } from "../src/mocks/state.ts";
+import { getProgressDetails } from "../src/mocks/services/progress.ts";
 import { users, classes, enrollments, lessons, attendance, quizzes, attempts, requests, schedules, assignmentDrafts, notifications } from "../src/mocks/seed.ts";
 test("seed references point to real entities", () => {
   for (const c of classes) assert(users.some(u => u.id === c.teacherId && u.role === "teacher"));
@@ -81,14 +83,14 @@ test("unknown/unassigned roles and pending-only membership return empty scoped d
   assert.equal(service.getStudentDashboard("missing").continueLearning, null);
 });
 
-test("class statistics average the same student progress shown on student dashboard", () => {
+test("class statistics average source counts without rounding each Student percentage first", () => {
   assert.equal(typeof service.getStudentDashboard, "function");
   const admin = getDashboard();
   for (const row of admin.classes) {
     const members = enrollments.filter(e => e.classId === row.id && e.status === "approved");
-    const tracks = members.map(e => service.getStudentDashboard(e.studentId).classes.find(c => c.id === row.id)!.progress);
-    assert.equal(row.attendance, Math.round(tracks.reduce((sum, p) => sum + p.attendance, 0) / members.length));
-    assert.equal(row.quiz, Math.round(tracks.reduce((sum, p) => sum + p.quiz, 0) / members.length));
+    const tracks = members.map(e => getProgressDetails(baseState, row.id, e.studentId));
+    assert.equal(row.attendance, Math.round(tracks.reduce((sum, p) => sum + p.attendedSessions, 0) * 100 / (members.length * row.totalLessons)));
+    assert.equal(row.quiz, Math.round(tracks.reduce((sum, p) => sum + p.passedQuizzes, 0) * 100 / (members.length * tracks[0].requiredQuizzes)));
   }
 });
 

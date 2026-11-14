@@ -1,7 +1,11 @@
 import { executeLesson, lessonCommandTypes, type LessonCommand } from "./lessons.ts";
+import { executeQuiz, quizCommandTypes, type QuizCommand } from "./quizzes.ts";
+import { executeLibrary, libraryCommandTypes, type LibraryCommand } from "./library.ts";
+import { executeCommunication, communicationCommandTypes, type CommunicationCommand } from "./communications.ts";
+import { executeCertificate, certificateCommandTypes, type CertificateCommand } from "./certificates.ts";
 import type { Class, LmsState, Role, User } from "../../types/lms.ts";
 
-export type Command = LessonCommand
+export type Command = LessonCommand | QuizCommand | LibraryCommand | CommunicationCommand | CertificateCommand
   | { type: "saveAccount"; userId?: string; role: "student" | "teacher"; name: string; email: string; phone: string }
   | { type: "setAccountStatus"; userId: string; suspended: boolean; reason: string }
   | { type: "saveClass"; course: Class; reason: string }
@@ -33,6 +37,10 @@ export function getEnrollmentState(state: LmsState, classId: string, studentId: 
 }
 
 export function execute(original: LmsState, actorId: string, command: Command, now: number): LmsState {
+  if (certificateCommandTypes.includes(command.type)) return executeCertificate(original, actorId, command as CertificateCommand, now);
+  if (libraryCommandTypes.includes(command.type)) return executeLibrary(original, actorId, command as LibraryCommand, now);
+  if (communicationCommandTypes.includes(command.type)) return executeCommunication(original, actorId, command as CommunicationCommand, now);
+  if (quizCommandTypes.includes(command.type)) return executeQuiz(original, actorId, command as QuizCommand, now);
   if (lessonCommandTypes.includes(command.type)) return executeLesson(original, actorId, command as LessonCommand, now);
   const state = structuredClone(original);
   const actor = state.users.find(u => u.id === actorId);
@@ -136,6 +144,7 @@ export function execute(original: LmsState, actorId: string, command: Command, n
         state.attendance = state.attendance.filter(a => a.studentId !== request.senderId || !lessonIds.has(a.lessonId));
         state.attempts = state.attempts.filter(a => a.studentId !== request.senderId || !quizIds.has(a.quizId));
         state.assignmentDrafts = state.assignmentDrafts.filter(d => d.studentId !== request.senderId || !quizIds.has(d.quizId));
+        enrollment.cycleId = id("enrollment-cycle");
       } else {
         enrollment.declineCount = (enrollment.declineCount ?? 0) + 1;
         enrollment.declineReason = reason(command.reason);

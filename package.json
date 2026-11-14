@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/dashboard.test.ts tests/management.test.ts tests/lessons.test.ts"
+    "test": "node --experimental-strip-types --test tests/dashboard.test.ts tests/management.test.ts tests/lessons.test.ts tests/quizzes.test.ts tests/library-communications.test.ts tests/progress-certificates.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

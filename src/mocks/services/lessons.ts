@@ -1,4 +1,5 @@
 import type { ApprovalRequest, LessonDraft, LmsState } from '../../types/lms.ts';
+import { getMaterialStatus } from './library.ts';
 
 export type LessonCommand =
  | ({ type: 'saveLesson'; lessonId: string; classId: string } & LessonDraft)
@@ -51,7 +52,7 @@ export function executeLesson(original: LmsState, actorId: string, command: Less
   const l=lessonFor(command.lessonId);teacher(l.classId);rule(l.classId===command.classId&&!['active','completed'].includes(getLessonStatus(state,l.id,now)),'Chọn buổi học chưa hoàn thành trong lớp.');
   rule(!state.requests.some(r=>r.lessonId===l.id&&r.kind==='schedule'&&r.status==='waiting'),'Lịch đang chờ duyệt.');
   rule(command.title.trim()&&command.attendanceCode.trim(),'Nhập tên và mã điểm danh.');window(l.classId,command.startsAt,command.endsAt);
-  rule(command.materialIds.every(mid=>state.materials.some(m=>m.id===mid&&m.classId===l.classId&&(!m.expiresAt||Date.parse(m.expiresAt)>now))),'Tài liệu không thuộc lớp hoặc đã hết hạn.');
+  rule(command.materialIds.every(mid=>state.materials.some(m=>m.id===mid&&m.classId===l.classId&&getMaterialStatus(state,actorId,m,now)==='available')),'Tài liệu không thuộc lớp hoặc đã hết hạn.');
   l.draft={title:command.title.trim(),description:command.description.trim(),startsAt:command.startsAt,endsAt:command.endsAt,materialIds:[...new Set(command.materialIds)],attendanceCode:command.attendanceCode.trim()};
   const s=state.schedules.find(s=>s.lessonId===l.id);
   if(!s)state.schedules.push({id:id('schedule'),lessonId:l.id,startsAt:command.startsAt,endsAt:command.endsAt,status:'draft'});

@@ -15,6 +15,13 @@ const statuses = {
   expired: { label: "Đã hết hạn", style: "bg-slate-100 text-slate-700" },
   approved: { label: "Đã duyệt", style: "bg-emerald-50 text-emerald-800" },
   pending: { label: "Waiting for Approval", style: "bg-amber-50 text-amber-800" },
+  eligible: { label: "Đủ ngưỡng điểm", style: "bg-emerald-50 text-emerald-800" },
+  ineligible: { label: "Chưa đủ ngưỡng", style: "bg-amber-50 text-amber-800" },
+  issued: { label: "Issued · Đã cấp mô phỏng", style: "bg-emerald-50 text-emerald-800" },
+  underReview: { label: "Under review · Đang xem xét", style: "bg-amber-50 text-amber-800" },
+  revoked: { label: "Revoked · Đã thu hồi", style: "bg-red-50 text-red-800" },
+  passed: { label: "Đạt", style: "bg-emerald-50 text-emerald-800" },
+  failed: { label: "Chưa đạt", style: "bg-red-50 text-red-800" },
 } as const;
 
 export function StatusBadge({ status, label: customLabel }: { status: keyof typeof statuses; label?: string }) {
