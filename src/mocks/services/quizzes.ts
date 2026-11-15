@@ -1,3 +1,4 @@
+import { currentCycleId, inEnrollmentCycle, grantForCycle } from './enrollment-cycles.ts';
 import type { LmsState, Quiz, QuizAttempt, QuizQuestion } from '../../types/lms.ts';
 import { getBestValidScore } from './progress.ts';
 
@@ -24,8 +25,8 @@ export function getAttemptRemaining(attempt: QuizAttempt, now: number): number {
 
 export function getQuizAvailability(state: LmsState, quizId: string, studentId: string, now: number) {
   const quiz = state.quizzes.find(q => q.id === quizId);
-  const attempts = state.attempts.filter(a => a.quizId === quizId && a.studentId === studentId);
-  const grants = (quiz?.grants ?? []).filter(g => !g.studentId || g.studentId === studentId);
+  const attempts = state.attempts.filter(a => a.quizId === quizId && a.studentId === studentId && inEnrollmentCycle(state, quiz!.classId, studentId, a));
+  const grants = (quiz?.grants ?? []).filter(g => !!quiz && grantForCycle(state, quiz.classId, studentId, g));
   const effectiveDueAt = grants.reduce((date, g) => Date.parse(g.newDueAt) > Date.parse(date) ? g.newDueAt : date, quiz?.dueAt ?? new Date(0).toISOString());
   const attemptLimit = (quiz?.attemptLimit ?? (quiz?.kind === 'assignment' ? 10 : 1)) + grants.reduce((sum, g) => sum + g.extraAttempts, 0);
   const remainingAttempts = Math.max(0, attemptLimit - attempts.length);
@@ -68,6 +69,13 @@ function submit(attempt: QuizAttempt, now: number, reason: QuizAttempt['submissi
   Object.assign(attempt, { status: 'submitted', valid: true, submittedAt: new Date(now).toISOString(), submissionReason: reason, remainingMs: 0, timeOffsetMs: 0 });
 }
 
+function notifySubmission(state: LmsState, attempt: QuizAttempt, now: number) {
+  const quiz = state.quizzes.find(item => item.id === attempt.quizId);
+  if (!quiz) return;
+  const passed = attempt.score >= (attempt.passingScore ?? quiz.passingScore);
+  state.notifications.push({ id: `quiz-result-${attempt.id ?? state.notifications.length}`, recipientId: attempt.studentId, classId: quiz.classId, title: `Kết quả Quiz · ${passed ? 'Đạt' : 'Chưa đạt'}`, description: `${quiz.title}: ${attempt.score}/100 · ngưỡng đạt ${attempt.passingScore ?? quiz.passingScore}/100. Tiến độ tính mỗi bài một lần theo điểm cao nhất hợp lệ.`, createdAt: new Date(now).toISOString(), href: inEnrollmentCycle(state, quiz.classId, attempt.studentId, attempt) && state.enrollments.some(e => e.classId === quiz.classId && e.studentId === attempt.studentId && e.status === 'approved') ? `/student/classes/${quiz.classId}/quizzes/${quiz.id}` : `/student/classes?view=history&classId=${quiz.classId}` });
+}
+
 // Timer completion is a system transition, including after membership changes.
 export function syncDueQuizAttempts(state: LmsState, now: number): LmsState {
   if (!state.attempts.some(a => active(a) && getAttemptRemaining(a, now) === 0)) return state;
@@ -75,6 +83,7 @@ export function syncDueQuizAttempts(state: LmsState, now: number): LmsState {
   for (const attempt of result.attempts) {
     if (!active(attempt) || getAttemptRemaining(attempt, now) > 0) continue;
     submit(attempt, now, attempt.dueAt && now >= Date.parse(attempt.dueAt) ? 'deadline' : 'duration');
+    notifySubmission(result, attempt, now);
   }
   return result;
 }
@@ -86,10 +95,10 @@ export function executeQuiz(original: LmsState, actorId: string, command: QuizCo
   const isoNow = new Date(now).toISOString();
   const id = (prefix: string) => `${prefix}-${now}-${state.quizzes.length}-${state.attempts.length}-${state.requests.length}-${state.notifications.length}`;
   const notify = (recipientId: string, quiz: Quiz, title: string, description: string) => state.notifications.push({ id: id('quiz-notice'), recipientId, classId: quiz.classId, title, description, createdAt: isoNow, href: `/${state.users.find(u => u.id === recipientId)?.role ?? 'student'}/classes/${quiz.classId}` });
-  const manage = (quiz: Pick<Quiz, 'classId'>) => {
+  const manage = (quiz: Pick<Quiz, 'classId'>, allowExpired = false) => {
     const course = state.classes.find(c => c.id === quiz.classId);
-    requireRule(actor.role === 'teacher' && course?.teacherId === actor.id, 'Bạn không phụ trách lớp học này.');
-    requireRule(!expiredClass(course.expiresAt, now), 'Lớp đã hết hạn.');
+    requireRule(actor.role === 'manager' && course?.managerId === actor.id, 'Bạn không phụ trách lớp học này.');
+    requireRule(allowExpired || !expiredClass(course.expiresAt, now), 'Lớp đã hết hạn.');
   };
   const student = (quiz: Quiz) => {
     const course = state.classes.find(c => c.id === quiz.classId);
@@ -102,7 +111,7 @@ export function executeQuiz(original: LmsState, actorId: string, command: QuizCo
     requireRule(newDueAt && Number.isFinite(Date.parse(newDueAt)) && Date.parse(newDueAt) > now && Date.parse(newDueAt) > Date.parse(quiz.opensAt), 'Chọn thời hạn mới trong tương lai.');
     requireRule(!studentId || (state.users.some(u => u.id === studentId && u.role === 'student' && u.status !== 'suspended') && state.enrollments.some(e => e.classId === quiz.classId && e.studentId === studentId && e.status === 'approved')), 'Học viên không còn trong lớp.');
     quiz.grants ??= [];
-    quiz.grants.push({ id: id('quiz-grant'), studentId, extraAttempts, newDueAt, reason: reason.trim(), grantedAt: isoNow, grantedBy: actor.id });
+    quiz.grants.push({ id: id('quiz-grant'), studentId, ...(studentId ? { cycleId: currentCycleId(state, quiz.classId, studentId) } : { cycleTargets: state.enrollments.filter(e => e.classId === quiz.classId && e.status === 'approved').map(e => ({ classId: quiz.classId, studentId: e.studentId, cycleId: currentCycleId(state, quiz.classId, e.studentId)! })) }), extraAttempts, newDueAt, reason: reason.trim(), grantedAt: isoNow, grantedBy: actor.id });
     for (const admin of state.users.filter(u => u.role === 'admin')) notify(admin.id, quiz, 'Quiz được mở lại', `${quiz.title}: ${reason.trim()} · ${extraAttempts} lượt · hạn ${newDueAt}`);
     const recipients = studentId ? [studentId] : state.enrollments.filter(e => e.classId === quiz.classId && e.status === 'approved').map(e => e.studentId);
     for (const recipient of recipients) notify(recipient, quiz, 'Được bổ sung lượt làm Quiz', `${quiz.title}: ${reason.trim()} · ${extraAttempts} lượt · hạn ${newDueAt}`);
@@ -122,7 +131,7 @@ export function executeQuiz(original: LmsState, actorId: string, command: QuizCo
     requireRule(request?.status === 'waiting', 'Yêu cầu không còn chờ duyệt.');
     const quiz = state.quizzes.find(q => q.id === request.quizId);
     requireRule(quiz, 'Không tìm thấy Quiz.');
-    manage(quiz);
+    manage(quiz, !command.approved);
     if (command.approved) grant(quiz, request.senderId, command.reason || request.description, command.extraAttempts, command.newDueAt);
     else requireRule(command.reason.trim(), 'Nhập lý do từ chối.');
     Object.assign(request, { status: command.approved ? 'approved' : 'declined', resolutionReason: command.reason.trim() || request.description, resolvedAt: isoNow });
@@ -131,25 +140,25 @@ export function executeQuiz(original: LmsState, actorId: string, command: QuizCo
     const quiz = state.quizzes.find(q => q.id === command.quizId);
     requireRule(quiz, 'Không tìm thấy Quiz.');
     if (command.type === 'publishQuiz') { manage(quiz); validateQuiz(quiz); quiz.status = 'published'; }
-    if (command.type === 'reopenQuiz') { manage(quiz); grant(quiz, command.studentId, command.reason, command.extraAttempts, command.newDueAt); }
+    if (command.type === 'reopenQuiz') { manage(quiz); requireRule(quiz.kind !== 'assignment' || now >= Date.parse(quiz.dueAt), 'Chỉ mở lại Assignment sau khi hết hạn.'); grant(quiz, command.studentId, command.reason, command.extraAttempts, command.newDueAt); }
     if (command.type === 'startQuiz') {
       student(quiz);
       const availability = getQuizAvailability(state, quiz.id, actor.id, now);
       requireRule(availability.status === 'available', 'Bài chưa mở, đã hết hạn hoặc hết lượt làm.');
       validateQuiz(quiz);
       quiz.contentLocked = true;
-      state.attempts.push({ id: id('attempt'), quizId: quiz.id, studentId: actor.id, score: 0, valid: false, status: 'active', answers: {}, questions: structuredClone(quiz.questions), passingScore: quiz.passingScore, startedAt: isoNow, lastResumedAt: isoNow, remainingMs: quiz.timeLimitMinutes * 60000, timeOffsetMs: 0, dueAt: availability.effectiveDueAt });
-      state.assignmentDrafts = state.assignmentDrafts.filter(d => d.quizId !== quiz.id || d.studentId !== actor.id);
+      state.attempts.push({ id: id('attempt'), cycleId: currentCycleId(state, quiz.classId, actor.id), quizId: quiz.id, studentId: actor.id, score: 0, valid: false, status: 'active', answers: {}, questions: structuredClone(quiz.questions), passingScore: quiz.passingScore, startedAt: isoNow, lastResumedAt: isoNow, remainingMs: quiz.timeLimitMinutes * 60000, timeOffsetMs: 0, dueAt: availability.effectiveDueAt });
+      state.assignmentDrafts = state.assignmentDrafts.filter(d => d.quizId !== quiz.id || d.studentId !== actor.id || !inEnrollmentCycle(state, quiz.classId, actor.id, d));
     }
     if (command.type === 'requestRetake') {
       student(quiz);
       requireRule(quiz.kind === 'test' && quiz.status !== 'draft', 'Chỉ gửi yêu cầu làm lại Test đã xuất bản.');
       requireRule(command.reason.trim(), 'Vui lòng nhập lý do.');
-      requireRule(state.attempts.some(a => a.quizId === quiz.id && a.studentId === actor.id && !active(a)), 'Cần hoàn thành một lượt làm trước.');
-      requireRule(!state.attempts.some(a => a.quizId === quiz.id && a.studentId === actor.id && active(a)), 'Bạn đang có bài làm chưa hoàn thành.');
+      requireRule(state.attempts.some(a => a.quizId === quiz.id && a.studentId === actor.id && inEnrollmentCycle(state, quiz.classId, actor.id, a) && !active(a)), 'Cần hoàn thành một lượt làm trước.');
+      requireRule(!state.attempts.some(a => a.quizId === quiz.id && a.studentId === actor.id && inEnrollmentCycle(state, quiz.classId, actor.id, a) && active(a)), 'Bạn đang có bài làm chưa hoàn thành.');
       requireRule(!state.requests.some(r => r.kind === 'test-retake' && r.quizId === quiz.id && r.senderId === actor.id && r.status === 'waiting'), 'Yêu cầu đang chờ duyệt.');
-      state.requests.push({ id: id('retake'), kind: 'test-retake', quizId: quiz.id, classId: quiz.classId, senderId: actor.id, title: `Xin làm lại ${quiz.title}`, description: command.reason.trim(), createdAt: isoNow, status: 'waiting' });
-      notify(state.classes.find(c => c.id === quiz.classId)!.teacherId, quiz, 'Học viên xin làm lại Test', `${actor.name}: ${command.reason.trim()}`);
+      state.requests.push({ id: id('retake'), kind: 'test-retake', cycleId: currentCycleId(state, quiz.classId, actor.id), quizId: quiz.id, classId: quiz.classId, senderId: actor.id, title: `Xin làm lại ${quiz.title}`, description: command.reason.trim(), createdAt: isoNow, status: 'waiting' });
+      notify(state.classes.find(c => c.id === quiz.classId)!.managerId, quiz, 'Học viên xin làm lại Test', `${actor.name}: ${command.reason.trim()}`);
     }
   } else {
     const attempt = state.attempts.find(a => a.id === command.attemptId);
@@ -157,6 +166,7 @@ export function executeQuiz(original: LmsState, actorId: string, command: QuizCo
     const quiz = state.quizzes.find(q => q.id === attempt.quizId);
     requireRule(quiz, 'Không tìm thấy Quiz.');
     student(quiz);
+    requireRule(inEnrollmentCycle(state, quiz.classId, actor.id, attempt), 'Lượt làm thuộc lần ghi danh cũ.');
     if (!active(attempt)) { requireRule(command.type === 'syncQuiz', 'Bài đã nộp.'); return state; }
     const deadlineReached = !!attempt.dueAt && now >= Date.parse(attempt.dueAt);
     if (getAttemptRemaining(attempt, now) === 0) submit(attempt, now, deadlineReached ? 'deadline' : 'duration');
@@ -182,6 +192,7 @@ export function executeQuiz(original: LmsState, actorId: string, command: QuizCo
       }
       case 'resumeQuiz': requireRule(quiz.kind === 'assignment', 'Chỉ Assignment được tiếp tục.'); if (attempt.status === 'paused') { attempt.status = 'active'; attempt.lastResumedAt = isoNow; } break;
     }
+    if (!active(attempt)) notifySubmission(state, attempt, now);
   }
   return state;
 }

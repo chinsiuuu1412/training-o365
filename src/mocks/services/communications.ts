@@ -3,7 +3,7 @@ import { getCompletionApprovers } from "./completion.ts";
 
 export type NotificationAudience =
   | { type: "people"; recipientIds: string[] }
-  | { type: "classes"; classIds: string[]; includeTeachers: boolean; studentIds: string[] };
+  | { type: "classes"; classIds: string[]; includeManagers: boolean; studentIds: string[] };
 
 export type CommunicationCommand =
   | { type: "sendNotification"; title: string; description: string; audience: NotificationAudience }
@@ -21,7 +21,7 @@ function requireRule(value: unknown, message: string): asserts value {
 export function getMessageClasses(state: LmsState, actorId: string) {
   const actor = state.users.find(user => user.id === actorId);
   if (!actor || actor.status === "suspended") return [];
-  return state.classes.filter(course => actor.role === "admin" || course.teacherId === actorId || state.enrollments.some(enrollment => enrollment.classId === course.id && enrollment.studentId === actorId && enrollment.status === "approved"));
+  return state.classes.filter(course => actor.role === "admin" || course.managerId === actorId || state.enrollments.some(enrollment => enrollment.classId === course.id && enrollment.studentId === actorId && enrollment.status === "approved"));
 }
 
 export function getDirectRecipients(state: LmsState, actorId: string): User[] {
@@ -31,9 +31,9 @@ export function getDirectRecipients(state: LmsState, actorId: string): User[] {
   const studentIds = new Set(state.enrollments.filter(enrollment => enrollment.status === "approved" && classes.some(course => course.id === enrollment.classId)).map(enrollment => enrollment.studentId));
   return state.users.filter(user => {
     if (user.id === actorId) return false;
-    if (actor.role === "admin") return user.role === "teacher" || user.role === "student";
-    if (actor.role === "teacher") return user.role === "admin" || (user.role === "student" && studentIds.has(user.id));
-    return user.role === "teacher" && classes.some(course => course.teacherId === user.id);
+    if (actor.role === "admin") return user.role === "manager" || user.role === "student";
+    if (actor.role === "manager") return user.role === "admin" || (user.role === "student" && studentIds.has(user.id));
+    return user.role === "manager" && classes.some(course => course.managerId === user.id);
   });
 }
 
@@ -45,14 +45,14 @@ export function getAudienceRecipients(state: LmsState, actorId: string, audience
     requireRule(audience.recipientIds.length > 0 && audience.recipientIds.every(id => allowed.some(user => user.id === id)), "Chọn người nhận thuộc phạm vi được phép.");
     return [...new Set(audience.recipientIds)];
   }
-  requireRule(actor.role !== "student", "Học viên chỉ gửi cho giảng viên lớp đã đăng ký.");
+  requireRule(actor.role !== "student", "Học viên chỉ gửi cho quản lý lớp lớp đã đăng ký.");
   const classes = getMessageClasses(state, actorId);
   requireRule(audience.classIds.length > 0 && audience.classIds.every(id => classes.some(course => course.id === id)), "Lớp nhận thông báo không thuộc phạm vi quản lý.");
-  requireRule(!audience.includeTeachers || actor.role === "admin", "Chỉ Admin được chọn gửi theo lớp cho giảng viên.");
+  requireRule(!audience.includeManagers || actor.role === "admin", "Chỉ Admin được chọn gửi theo lớp cho quản lý lớp.");
   const students = state.enrollments.filter(enrollment => enrollment.status === "approved" && audience.classIds.includes(enrollment.classId)).map(enrollment => enrollment.studentId);
   requireRule(audience.studentIds.every(id => students.includes(id)), "Học viên không còn thuộc các lớp đã chọn.");
-  const teachers = audience.includeTeachers ? classes.filter(course => audience.classIds.includes(course.id)).map(course => course.teacherId) : [];
-  const recipients = [...new Set([...audience.studentIds, ...teachers])].filter(id => id !== actorId);
+  const managers = audience.includeManagers ? classes.filter(course => audience.classIds.includes(course.id)).map(course => course.managerId) : [];
+  const recipients = [...new Set([...audience.studentIds, ...managers])].filter(id => id !== actorId);
   requireRule(recipients.length, "Chọn ít nhất một người nhận.");
   return recipients;
 }
@@ -75,20 +75,20 @@ export interface RequestItem {
 
 const kindLabels: Record<ApprovalRequest["kind"], string> = {
   schedule: "Lịch học", enrollment: "Đăng ký lớp", "test-retake": "Làm lại Test",
-  "teacher-leave": "Giảng viên xin nghỉ", "attendance-correction": "Điều chỉnh điểm danh", absence: "Học viên xin nghỉ",
+  "manager-leave": "Quản lý lớp xin nghỉ", "attendance-correction": "Điều chỉnh điểm danh", "quiz-correction": "Điều chỉnh kết quả Quiz", absence: "Học viên xin nghỉ",
 };
 
 export function getRequestItems(state: LmsState, actorId: string): RequestItem[] {
   const actor = state.users.find(user => user.id === actorId);
   if (!actor || actor.status === "suspended") return [];
-  const workflow: RequestItem[] = state.requests.map(request => {
-    const adminRequest = ["schedule", "teacher-leave", "attendance-correction"].includes(request.kind);
+  const workflow: RequestItem[] = state.requests.filter(request => !["manager-leave", "attendance-correction"].includes(request.kind) && !(request.kind === "schedule" && request.leaveRequestId)).map(request => {
+    const adminRequest = ["schedule", "manager-leave", "attendance-correction", "quiz-correction"].includes(request.kind);
     const course = state.classes.find(item => item.id === request.classId);
-    const recipientIds = adminRequest ? state.users.filter(user => user.role === "admin").map(user => user.id) : course ? [course.teacherId] : [];
+    const recipientIds = adminRequest ? state.users.filter(user => user.role === "admin").map(user => user.id) : course ? [course.managerId] : [];
     let href: string;
-    if (actor.role === "admin" && adminRequest) href = "/admin/schedule-approvals";
+    if (actor.role === "admin" && adminRequest) href = request.kind === "quiz-correction" ? `/admin/classes/${request.classId}?tab=quizzes` : "/admin/schedule-approvals";
     else {
-      const tab = request.kind === "test-retake" ? "quizzes" : request.kind === "enrollment" ? (actor.role === "teacher" ? "requests" : "overview") : "lessons";
+      const tab = ["test-retake", "quiz-correction"].includes(request.kind) ? "quizzes" : request.kind === "enrollment" ? (actor.role === "manager" ? "requests" : "overview") : "lessons";
       href = `/${actor.role}/classes/${request.classId}?tab=${tab}`;
     }
     return { ...request, source: "workflow", recipientIds, kindLabel: kindLabels[request.kind], href };
@@ -101,13 +101,13 @@ export function getRequestItems(state: LmsState, actorId: string): RequestItem[]
   }));
   const appeals: RequestItem[] = (state.completionAppeals ?? []).map(appeal => ({
     ...appeal, source: "appeal", title: `Khiếu nại hoàn thành · ${appeal.snapshot.studentName}`, description: appeal.reason,
-    senderId: appeal.studentId, recipientIds: state.classes.filter(course => course.id === appeal.classId).map(course => course.teacherId),
+    senderId: appeal.studentId, recipientIds: state.classes.filter(course => course.id === appeal.classId).map(course => course.managerId),
     status: appeal.status === "forwarded" ? "waiting" : appeal.status, kindLabel: appeal.status === "forwarded" ? "Khiếu nại · Đã chuyển duyệt chéo" : "Khiếu nại hoàn thành",
     href: `/${actor.role}/certificates?classId=${appeal.classId}`,
   }));
   return [...workflow, ...general, ...completion, ...appeals].filter(request => {
     if (request.senderId === actorId || request.recipientIds.includes(actorId)) return true;
-    return request.source === "completion" && (actor.role === "admin" || (actor.role === "teacher" && state.classes.some(course => course.id === request.classId && course.teacherId === actorId)));
+    return request.source === "completion" && (actor.role === "admin" || (actor.role === "manager" && state.classes.some(course => course.id === request.classId && course.managerId === actorId)));
   }).sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
 }
 
@@ -167,10 +167,10 @@ export function executeCommunication(original: LmsState, actorId: string, comman
       });
     } else {
       const recipient = getDirectRecipients(state, actorId).find(user => user.id === command.recipientId);
-      requireRule((actor.role === "teacher" && recipient?.role === "admin") || (actor.role === "student" && recipient?.role === "teacher"), "Teacher chỉ gửi yêu cầu tự do đến Admin, Student chỉ gửi đến giảng viên lớp đã đăng ký.");
+      requireRule((actor.role === "manager" && recipient?.role === "admin") || (actor.role === "student" && recipient?.role === "manager"), "Manager chỉ gửi yêu cầu tự do đến Admin, Student chỉ gửi đến quản lý lớp lớp đã đăng ký.");
       if (command.classId) {
         const course = getMessageClasses(state, actorId).find(item => item.id === command.classId);
-        requireRule(course && (actor.role !== "student" || course.teacherId === recipient.id), "Lớp không phù hợp với người nhận.");
+        requireRule(course && (actor.role !== "student" || course.managerId === recipient.id), "Lớp không phù hợp với người nhận.");
       }
       const request: GeneralRequest = { id, senderId: actorId, recipientId: recipient.id, classId: command.classId, title: command.title.trim(), description: command.description.trim(), createdAt, status: "waiting" };
       state.generalRequests ??= [];

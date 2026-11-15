@@ -5,7 +5,7 @@ export function isValidCompletionState(state: LmsState) {
   const date = (value: unknown) => text(value) && Number.isFinite(Date.parse(value as string));
   const user = (id: string) => state.users.some(item => item.id === id);
   const student = (id: string) => state.users.some(item => item.id === id && item.role === "student");
-  const staff = (id: string) => state.users.some(item => item.id === id && ["admin", "teacher"].includes(item.role));
+  const staff = (id: string) => state.users.some(item => item.id === id && ["admin", "manager"].includes(item.role));
   const optionalDate = (value: unknown) => value === undefined || date(value);
   const optionalText = (value: unknown) => value === undefined || text(value);
   function snapshot(value: CompletionSnapshot) {

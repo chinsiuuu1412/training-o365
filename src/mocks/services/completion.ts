@@ -1,11 +1,12 @@
 import type { CompletionRequest, CompletionSnapshot, LmsState } from "../../types/lms.ts";
 import { getLessonStatus } from "./lessons.ts";
 import { getClassProgress, getProgressDetails } from "./progress.ts";
+import { currentCycleId } from "./enrollment-cycles.ts";
 
 export const approvalWaitMs = 24 * 60 * 60 * 1000;
 
 export function getEnrollmentCycle(state: LmsState, classId: string, studentId: string) {
-  return state.enrollments.find(item => item.classId === classId && item.studentId === studentId)?.cycleId ?? "initial";
+  return currentCycleId(state, classId, studentId) ?? "initial";
 }
 
 export function getClassResultFingerprint(state: LmsState, classId: string) {
@@ -29,7 +30,7 @@ export function getClassFinalization(state: LmsState, classId: string, now: numb
   const classFinished = !!course && course.totalLessons > 0 && lessons.length === course.totalLessons && finishedLessons === course.totalLessons;
   const quizIds = new Set(state.quizzes.filter(item => item.classId === classId && item.status !== "draft").map(item => item.id));
   const activeAttempts = state.attempts.filter(item => quizIds.has(item.quizId) && (item.status === "active" || item.status === "paused")).length;
-  const pendingGradeRequests = state.requests.filter(item => item.classId === classId && item.status === "waiting" && ["attendance-correction", "test-retake"].includes(item.kind)).length;
+  const pendingGradeRequests = state.requests.filter(item => item.classId === classId && item.status === "waiting" && ["attendance-correction", "quiz-correction", "test-retake"].includes(item.kind)).length;
   const record = state.classFinalizations?.filter(item => item.classId === classId).at(-1);
   const fingerprint = getClassResultFingerprint(state, classId);
   const blockers: string[] = [];
@@ -107,7 +108,7 @@ export function getProgressClasses(state: LmsState, actorId: string) {
   if (!actor || actor.status === "suspended") return [];
   return state.classes.filter(course => {
     if (actor.role === "admin") return true;
-    if (actor.role === "teacher") return course.teacherId === actorId;
+    if (actor.role === "manager") return course.managerId === actorId;
     return state.enrollments.some(item => item.classId === course.id && item.studentId === actorId && item.status === "approved")
       || state.certificates?.some(item => item.classId === course.id && item.studentId === actorId)
       || state.completionAppeals?.some(item => item.classId === course.id && item.studentId === actorId)
@@ -117,15 +118,15 @@ export function getProgressClasses(state: LmsState, actorId: string) {
 
 export function getCompletionApprovers(state: LmsState, request: CompletionRequest) {
   const sender = state.users.find(item => item.id === request.senderId);
-  if (sender?.role === "teacher") return state.users.filter(item => item.role === "admin").map(item => item.id);
+  if (sender?.role === "manager") return state.users.filter(item => item.role === "admin").map(item => item.id);
   const course = state.classes.find(item => item.id === request.classId);
-  return course ? [course.teacherId] : [];
+  return course ? [course.managerId] : [];
 }
 
 export function getCompletionDecisionAccess(state: LmsState, actorId: string, request: CompletionRequest, now: number) {
   const actor = state.users.find(item => item.id === actorId);
   const course = state.classes.find(item => item.id === request.classId);
-  const manages = actor?.role === "admin" || (actor?.role === "teacher" && course?.teacherId === actor.id);
+  const manages = actor?.role === "admin" || (actor?.role === "manager" && course?.managerId === actor.id);
   const available = !!actor && actor.status !== "suspended" && manages && request.status === "waiting";
   return {
     crossApproval: available && request.senderId !== actorId && getCompletionApprovers(state, request).includes(actorId),

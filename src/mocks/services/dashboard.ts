@@ -1,3 +1,4 @@
+import { inEnrollmentCycle } from "./enrollment-cycles.ts";
 import { baseState } from "../state.ts";
 import type { LmsState } from "../../types/lms.ts";
 import { dateInBangkok } from "./management.ts";
@@ -13,11 +14,11 @@ export function getDashboard(state: LmsState = baseState) {
   const { classes, lessons, users, requests, notifications, referenceTime } = state;
   const classRows = classes.map(c => {
     const progress = getClassProgress(state, c.id);
-    return { ...c, teacher: users.find(u => u.id === c.teacherId)!, students: progress.students.length, completedLessons: lessons.filter(l => l.classId === c.id && getLessonStatus(state,l.id,Date.parse(referenceTime)) === "completed").length, attendance: progress.attendance, quiz: progress.quiz };
+    return { ...c, manager: users.find(u => u.id === c.managerId)!, students: progress.students.length, completedLessons: lessons.filter(l => l.classId === c.id && getLessonStatus(state,l.id,Date.parse(referenceTime)) === "completed").length, attendance: progress.attendance, quiz: progress.quiz };
   });
   return {
     referenceTime,
-    stats: { students: users.filter(u => u.role === "student").length, teachers: users.filter(u => u.role === "teacher").length, classes: classes.length, pending: requests.filter(r => r.kind === "schedule" && r.status === "waiting").length },
+    stats: { students: users.filter(u => u.role === "student").length, managers: users.filter(u => u.role === "manager").length, classes: classes.length, pending: requests.filter(r => r.kind === "schedule" && r.status === "waiting").length },
     classes: classRows,
     requests: requests.filter(r => r.kind === "schedule").map(r => enrichRequest(r, state)),
     activities: notifications.filter(n => n.recipientId === "a1"),
@@ -41,9 +42,9 @@ function getUpcomingLessons(classIds: Set<string>, state: LmsState = baseState) 
   }).sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
 }
 
-export function getTeacherDashboard(teacherId: string, state: LmsState = baseState) {
+export function getManagerDashboard(managerId: string, state: LmsState = baseState) {
   const { users, requests, notifications, referenceTime } = state;
-  const ownedClasses = getDashboard(state).classes.filter(c => c.teacherId === teacherId && users.some(u => u.id === teacherId && u.role === "teacher"));
+  const ownedClasses = getDashboard(state).classes.filter(c => c.managerId === managerId && users.some(u => u.id === managerId && u.role === "manager"));
   const classIds = new Set(ownedClasses.map(c => c.id));
   const pending = requests.filter(r => classIds.has(r.classId) && r.status === "waiting").map(r => enrichRequest(r, state));
   return {
@@ -51,7 +52,7 @@ export function getTeacherDashboard(teacherId: string, state: LmsState = baseSta
     enrollmentRequests: pending.filter(r => r.kind === "enrollment"),
     retakeRequests: pending.filter(r => r.kind === "test-retake" && r.quiz?.kind === "test"),
     upcomingLessons: getUpcomingLessons(classIds, state),
-    notifications: notifications.filter(n => n.recipientId === teacherId),
+    notifications: notifications.filter(n => n.recipientId === managerId),
   };
 }
 
@@ -62,11 +63,11 @@ export function getStudentDashboard(studentId: string, state: LmsState = baseSta
   const registeredClasses = getDashboard(state).classes.filter(c => registered.has(c.id) && c.expiresAt >= day).map(c => ({ ...c, progress: getStudentProgress(c.id, studentId, state) }));
   const classIds = new Set(registeredClasses.map(c => c.id));
   const deadlines = quizzes.map(q => ({ ...q, dueAt: getQuizAvailability(state, q.id, studentId, Date.parse(referenceTime)).effectiveDueAt })).filter(q => q.status !== "draft" && classIds.has(q.classId) && q.kind === "assignment" && Date.parse(q.opensAt) <= Date.parse(referenceTime) && Date.parse(q.dueAt) > Date.parse(referenceTime)).map(q => ({ ...q, course: registeredClasses.find(c => c.id === q.classId)! })).sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt));
-  const activeDrafts = state.attempts.filter(a => a.studentId === studentId && (a.status === "active" || a.status === "paused")).flatMap(a => {
+  const activeDrafts = state.attempts.filter(a => a.studentId === studentId && inEnrollmentCycle(state, state.quizzes.find(q => q.id === a.quizId)?.classId ?? "", studentId, a) && (a.status === "active" || a.status === "paused")).flatMap(a => {
     const quiz = deadlines.find(q => q.id === a.quizId);
     return quiz ? [{ studentId, quizId: quiz.id, answeredQuestions: Object.keys(a.answers ?? {}).length, totalQuestions: a.questions?.length ?? 0, remainingMinutes: Math.ceil(getAttemptRemaining(a, Date.parse(referenceTime)) / 60000), updatedAt: a.lastResumedAt ?? a.startedAt ?? referenceTime, quiz, course: quiz.course }] : [];
   });
-  const drafts = [...activeDrafts, ...assignmentDrafts.filter(d => d.studentId === studentId).flatMap(draft => {
+  const drafts = [...activeDrafts, ...assignmentDrafts.filter(d => d.studentId === studentId && inEnrollmentCycle(state, state.quizzes.find(q => q.id === d.quizId)?.classId ?? "", studentId, d)).flatMap(draft => {
     const quiz = deadlines.find(q => q.id === draft.quizId);
     return quiz ? [{ ...draft, quiz, course: quiz.course }] : [];
   })].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -77,7 +78,7 @@ export function getStudentDashboard(studentId: string, state: LmsState = baseSta
     notifications: notifications.filter(n => n.recipientId === studentId),
   };
 }
-export type TeacherDashboardData = ReturnType<typeof getTeacherDashboard>;
+export type ManagerDashboardData = ReturnType<typeof getManagerDashboard>;
 export type StudentDashboardData = ReturnType<typeof getStudentDashboard>;
 export type RequestRow = ReturnType<typeof enrichRequest>;
 export type UpcomingLesson = ReturnType<typeof getUpcomingLessons>[number];

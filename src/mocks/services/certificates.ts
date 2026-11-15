@@ -30,7 +30,7 @@ function notify(state: LmsState, recipientIds: string[], classId: string, title:
 
 function stakeholders(state: LmsState, classId: string, studentId: string) {
   const course = state.classes.find(item => item.id === classId);
-  return [studentId, ...(course ? [course.teacherId] : []), ...state.users.filter(item => item.role === "admin").map(item => item.id)];
+  return [studentId, ...(course ? [course.managerId] : []), ...state.users.filter(item => item.role === "admin").map(item => item.id)];
 }
 
 function progressFingerprint(state: LmsState, certificate: Certificate, now: number) {
@@ -128,7 +128,7 @@ export function executeCertificate(original: LmsState, actorId: string, command:
   const isoNow = new Date(now).toISOString();
   function manage(classId: string) {
     const course = state.classes.find(item => item.id === classId);
-    requireRule(course && (actor!.role === "admin" || (actor!.role === "teacher" && course.teacherId === actorId)), "Bạn không có quyền xử lý hoàn thành của lớp.");
+    requireRule(course && (actor!.role === "admin" || (actor!.role === "manager" && course.managerId === actorId)), "Bạn không có quyền xử lý hoàn thành của lớp.");
     return course;
   }
   function propose(classId: string, studentId: string, kind: CompletionRequest["kind"], reason: string, certificateId?: string, appealId?: string) {
@@ -178,18 +178,18 @@ export function executeCertificate(original: LmsState, actorId: string, command:
     const appeal = { id: `completion-appeal-${now}-${state.completionAppeals?.length ?? 0}`, classId: course.id, studentId: actorId, enrollmentCycle: eligibility.enrollmentCycle, reason: requireReason(command.reason), createdAt: isoNow, status: "waiting" as const, snapshot: getCompletionSnapshot(state, course.id, actorId, now) };
     state.completionAppeals ??= [];
     state.completionAppeals.push(appeal);
-    notify(state, [course.teacherId], course.id, "Học viên gửi khiếu nại hoàn thành", appeal.reason, now, actorId);
+    notify(state, [course.managerId], course.id, "Học viên gửi khiếu nại hoàn thành", appeal.reason, now, actorId);
   } else if (command.type === "reviewCompletionAppeal") {
     const appeal = state.completionAppeals?.find(item => item.id === command.appealId);
     requireRule(appeal && appeal.status === "waiting", "Khiếu nại không còn chờ xử lý.");
     manage(appeal.classId);
-    requireRule(actor.role === "teacher", "Giảng viên phụ trách tiếp nhận khiếu nại học viên.");
+    requireRule(actor.role === "manager", "Quản lý lớp phụ trách tiếp nhận khiếu nại học viên.");
     requireRule(getEnrollmentCycle(state, appeal.classId, appeal.studentId) === appeal.enrollmentCycle && state.enrollments.some(item => item.classId === appeal.classId && item.studentId === appeal.studentId && item.status === "approved"), "Lần ghi danh đã thay đổi.");
     if (command.forward) {
       const request = propose(appeal.classId, appeal.studentId, "exception", command.reason.trim() || appeal.reason, undefined, appeal.id);
-      Object.assign(appeal, { status: "forwarded", requestId: request.id, resolutionReason: "Giảng viên đã tiếp nhận và gửi đề xuất duyệt chéo." });
+      Object.assign(appeal, { status: "forwarded", requestId: request.id, resolutionReason: "Quản lý lớp đã tiếp nhận và gửi đề xuất duyệt chéo." });
     } else Object.assign(appeal, { status: "declined", resolvedAt: isoNow, resolutionReason: requireReason(command.reason) });
-    notify(state, [appeal.studentId], appeal.classId, command.forward ? "Khiếu nại đã được chuyển để duyệt chéo" : "Giảng viên từ chối khiếu nại", appeal.resolutionReason!, now, actorId);
+    notify(state, [appeal.studentId], appeal.classId, command.forward ? "Khiếu nại đã được chuyển để duyệt chéo" : "Quản lý lớp từ chối khiếu nại", appeal.resolutionReason!, now, actorId);
   } else if (command.type === "requestCompletion") {
     propose(command.classId, command.studentId, command.kind, command.reason, command.certificateId);
   } else {

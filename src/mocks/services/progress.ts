@@ -1,17 +1,18 @@
 import type { LmsState, QuizAttempt } from "../../types/lms.ts";
+import { currentCycleId, inEnrollmentCycle } from "./enrollment-cycles.ts";
 
 export function getBestValidScore(attempts: QuizAttempt[]) {
   const scores = attempts.filter(attempt => attempt.valid && attempt.status !== "active" && attempt.status !== "paused").map(attempt => attempt.score);
   return scores.length ? Math.max(...scores) : null;
 }
 
-export function getProgressDetails(state: LmsState, classId: string, studentId: string) {
+export function getProgressDetails(state: LmsState, classId: string, studentId: string, cycleId = currentCycleId(state, classId, studentId)) {
   const course = state.classes.find(item => item.id === classId);
   const lessonIds = new Set(state.lessons.filter(lesson => lesson.classId === classId).map(lesson => lesson.id));
-  const attended = new Set(state.attendance.filter(record => record.studentId === studentId && record.recorded && lessonIds.has(record.lessonId)).map(record => record.lessonId)).size;
+  const attended = new Set(state.attendance.filter(record => record.studentId === studentId && record.recorded && lessonIds.has(record.lessonId) && inEnrollmentCycle(state, classId, studentId, record, cycleId)).map(record => record.lessonId)).size;
   const requiredQuizzes = [...new Map(state.quizzes.filter(quiz => quiz.classId === classId && quiz.status !== "draft").map(quiz => [quiz.id, quiz])).values()];
   const quizzes = requiredQuizzes.map(quiz => {
-    const attempts = state.attempts.filter(attempt => attempt.quizId === quiz.id && attempt.studentId === studentId);
+    const attempts = state.attempts.filter(attempt => attempt.quizId === quiz.id && attempt.studentId === studentId && inEnrollmentCycle(state, classId, studentId, attempt, cycleId));
     const bestScore = getBestValidScore(attempts);
     const passed = bestScore !== null && bestScore >= quiz.passingScore;
     const result: "passed" | "failed" | "not-submitted" = passed ? "passed" : bestScore === null ? "not-submitted" : "failed";

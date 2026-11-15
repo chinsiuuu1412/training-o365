@@ -32,7 +32,7 @@ export function getLibraryMaterials(state: LmsState, actorId: string) {
     const course = state.classes.find(item => item.id === material.classId);
     if (!course) return false;
     if (actor.role === "admin") return true;
-    if (actor.role === "teacher") return course.teacherId === actorId;
+    if (actor.role === "manager") return course.managerId === actorId;
     return !material.removedAt && state.enrollments.some(enrollment => enrollment.classId === course.id && enrollment.studentId === actorId && enrollment.status === "approved");
   });
 }
@@ -58,7 +58,7 @@ export function executeLibrary(original: LmsState, actorId: string, command: Lib
   const createdAt = new Date(now).toISOString();
   if (command.type === "addMaterial") {
     const course = state.classes.find(item => item.id === command.classId);
-    requireRule(actor.role === "teacher" && course?.teacherId === actorId && !isExpired(course, now), "Chỉ giảng viên phụ trách lớp còn hạn được thêm tài liệu.");
+    requireRule(actor.role === "manager" && course?.managerId === actorId && !isExpired(course, now), "Chỉ quản lý lớp phụ trách lớp còn hạn được thêm tài liệu.");
     requireRule(command.title.trim() && command.title.trim().length <= 150, "Tên tài liệu bắt buộc và tối đa 150 ký tự.");
     requireRule(command.description.length <= 2000, "Mô tả tối đa 2000 ký tự.");
     requireRule(["document", "video"].includes(command.kind) && ["file", "youtube"].includes(command.source), "Loại tài liệu không hợp lệ.");
@@ -87,7 +87,7 @@ export function executeLibrary(original: LmsState, actorId: string, command: Lib
     const material = state.materials.find(item => item.id === command.materialId);
     const course = state.classes.find(item => item.id === material?.classId);
     requireRule(material && course && !material.removedAt, "Tài liệu không tồn tại hoặc đã được gỡ.");
-    requireRule(actor.role === "admin" || (actor.role === "teacher" && course.teacherId === actorId && !isExpired(course, now)), "Bạn không có quyền gỡ tài liệu này.");
+    requireRule(actor.role === "admin" || (actor.role === "manager" && course.managerId === actorId && !isExpired(course, now)), "Bạn không có quyền gỡ tài liệu này.");
     requireRule(actor.role !== "admin" || command.reason.trim(), "Admin phải nêu lý do gỡ tài liệu.");
     requireRule(command.reason.length <= 1000, "Lý do tối đa 1000 ký tự.");
     Object.assign(material, { removedAt: createdAt, removedBy: actorId, removalReason: command.reason.trim() });
@@ -97,9 +97,9 @@ export function executeLibrary(original: LmsState, actorId: string, command: Lib
     }
     for (const request of state.requests) request.proposalMaterialIds = request.proposalMaterialIds?.filter(id => id !== material.id);
     if (actor.role === "admin") state.notifications.push({
-      id: `material-removal-${now}-${state.notifications.length}`, recipientId: course.teacherId, senderId: actorId,
+      id: `material-removal-${now}-${state.notifications.length}`, recipientId: course.managerId, senderId: actorId,
       classId: course.id, title: "Admin đã gỡ tài liệu", description: `${material.title} · ${command.reason.trim()}`,
-      createdAt, href: `/teacher/classes/${course.id}?tab=materials`,
+      createdAt, href: `/manager/classes/${course.id}?tab=materials`,
     });
   }
   return state;

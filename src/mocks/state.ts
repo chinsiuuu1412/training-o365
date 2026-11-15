@@ -1,6 +1,10 @@
 import * as seed from "./seed.ts";
 import type { LmsState, QuizQuestion } from "../types/lms.ts";
 import { isValidCompletionState } from "./validate-completion.ts";
+import { validateAccount } from "./services/accounts.ts";
+import { migrateEnrollmentCycles, validEnrollmentCycles } from "./services/enrollment-cycles.ts";
+import { validClassDate } from "./services/class-policy.ts";
+import { migrateScheduleAttendance } from "./services/lessons.ts";
 
 // Defaults retain the original seed references for the existing projection tests.
 export const baseState: LmsState = {
@@ -9,23 +13,23 @@ export const baseState: LmsState = {
     {
       id: `material-${course.id}`, classId: course.id, title: `Đề cương ${course.name}`, kind: "document" as const,
       source: "file" as const, fileName: `de-cuong-${course.code}.pdf`, sizeBytes: 524288, mimeType: "application/pdf",
-      uploadedBy: course.teacherId, createdAt: seed.referenceTime,
+      uploadedBy: course.managerId, createdAt: seed.referenceTime,
     },
     {
       id: `video-${course.id}`, classId: course.id, lessonId: `${course.id}-l1`, title: `Video ôn tập ${course.name}`, kind: "video" as const,
       source: "file" as const, fileName: `on-tap-${course.code}.mp4`, sizeBytes: 8388608, mimeType: "video/mp4",
       expiresAt: course.id === "giai-tich" ? "2026-11-13T23:59:00+07:00" : undefined,
-      uploadedBy: course.teacherId, createdAt: seed.referenceTime,
+      uploadedBy: course.managerId, createdAt: seed.referenceTime,
     },
   ]),
 };
 
 export function createInitialState(): LmsState {
   const state = structuredClone(baseState);
-  state.users = state.users.map(u => ({ ...u, email: `${u.id}@hocviet.example`, phone: "", status: "active" }));
+  state.users = state.users.map((u, index) => ({ ...u, email: `${u.id}@${u.role === "student" ? "sis.hust.edu.vn" : "o365.example.invalid"}`, phone: u.role === "student" ? `000${String(index).padStart(7, "0")}` : "", status: "active", credentialVersion: 1, sessionVersion: 1, ...(u.role === "student" ? { studentNumber: `DEMO-${String(index).padStart(5, "0")}`, school: "Trường/Viện mô phỏng HUST", universityClass: "Lớp mẫu - Khóa demo", gender: "" } : {}) }));
   state.classes = state.classes.map(c => ({ ...c, description: `Kiến thức nền tảng và bài tập thực hành ${c.name}.`, attendanceThreshold: 80, quizThreshold: 70 }));
   state.enrollments = state.enrollments.map(e => ({ ...e, declineCount: 0, lastReason: state.requests.find(r => r.kind === "enrollment" && r.classId === e.classId && r.senderId === e.studentId && r.status === "waiting")?.description }));
-  return migrateQuizState(migrateLessonState(state));
+  return migrateScheduleAttendance(migrateEnrollmentCycles(migrateQuizState(migrateLessonState(state))));
 }
 
 export function isValidState(value: unknown): value is LmsState {
@@ -35,26 +39,52 @@ export function isValidState(value: unknown): value is LmsState {
   if (!keys.every(key => Array.isArray(state[key]) && state[key].every(row => row && typeof row === "object"))) return false;
   const text = (v: unknown) => typeof v === "string";
   const date = (v: unknown) => text(v) && Number.isFinite(Date.parse(v as string));
+  for (const key of ["users", "classes", "lessons", "quizzes", "requests", "notifications", "schedules", "materials"] as const) {
+    if (new Set(state[key].map(row => row.id)).size !== state[key].length) return false;
+  }
+  const attemptIds = state.attempts.flatMap(row => row.id === undefined ? [] : [row.id]);
+  if (new Set(attemptIds).size !== attemptIds.length) return false;
   const questions = (value: unknown): value is QuizQuestion[] => Array.isArray(value) && value.length > 0 && value.every(q => q && text(q.id) && q.id.length > 0 && text(q.prompt) && q.prompt.trim().length > 0 && Array.isArray(q.options) && q.options.length >= 2 && q.options.every((o: { id?: unknown; text?: unknown }) => o && text(o.id) && text(o.text)) && new Set(q.options.map((o: { id: string }) => o.id)).size === q.options.length && q.options.some((o: { id: string }) => o.id === q.correctOptionId)) && new Set(value.map(q => q.id)).size === value.length;
   if (!date(state.referenceTime)) return false;
-  if (!state.users.every(u => text(u.id) && text(u.name) && text(u.initials) && text(u.email) && ["admin", "teacher", "student"].includes(u.role) && ["active", "suspended"].includes(u.status ?? "active"))) return false;
-  if (!["admin", "teacher", "student"].every(role => state.users.some(u => u.role === role))) return false;
-  if (!state.classes.every(c => text(c.id) && text(c.name) && text(c.code) && text(c.description) && date(c.expiresAt) && Number.isInteger(c.capacity) && c.capacity > 0 && Number.isInteger(c.totalLessons) && c.totalLessons >= 0 && [c.attendanceThreshold, c.quizThreshold].every(n => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 100) && state.users.some(u => u.id === c.teacherId && u.role === "teacher"))) return false;
+  if (state.mockGeneration !== undefined && (typeof state.mockGeneration !== 'string' || !state.mockGeneration)) return false;
+  if (state.mockSessions !== undefined) {
+    if (!Array.isArray(state.mockSessions) || !state.mockSessions.every(session => session && text(session.id) && text(session.userId) && ['admin', 'manager', 'student'].includes(session.role) && Number.isSafeInteger(session.revision) && session.revision >= 1 && text(session.generation) && date(session.issuedAt) && typeof session.revoked === 'boolean' && state.users.some(user => user.id === session.userId)) || new Set(state.mockSessions.map(session => session.id)).size !== state.mockSessions.length) return false;
+  }
+  if (!state.users.every(u => text(u.id) && text(u.name) && text(u.initials) && text(u.email) && ["admin", "manager", "student"].includes(u.role) && ["active", "suspended"].includes(u.status ?? "active"))) return false;
+  if (!["admin", "manager", "student"].every(role => state.users.some(u => u.role === role))) return false;
+  if (new Set(state.users.map(user => user.email?.trim().toLowerCase())).size !== state.users.length) return false;
+  try {
+    for (const user of state.users) {
+      if ([user.credentialVersion, user.sessionVersion].some(version => version !== undefined && (!Number.isSafeInteger(version) || version < 1))) return false;
+      if ([user.phone, user.studentNumber, user.school, user.universityClass, user.gender].some(value => value !== undefined && typeof value !== 'string')) return false;
+      if (user.role !== 'admin') validateAccount(state, { ...user, role: user.role, userId: user.id });
+    }
+  } catch { return false; }
+  if (!state.classes.every(c => text(c.id) && text(c.name) && text(c.code) && text(c.description) && validClassDate(c.expiresAt) && Number.isInteger(c.capacity) && c.capacity > 0 && Number.isInteger(c.totalLessons) && c.totalLessons >= 0 && [c.attendanceThreshold, c.quizThreshold].every(n => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 100) && state.users.some(u => u.id === c.managerId && u.role === "manager"))) return false;
   const hasClass = (id: string) => state.classes.some(c => c.id === id);
   const hasUser = (id: string) => state.users.some(u => u.id === id);
   if (!state.enrollments.every(e => hasClass(e.classId) && hasUser(e.studentId) && ["approved", "pending", "declined", "cancelled", "removed"].includes(e.status) && (e.lastReason === undefined || text(e.lastReason)))) return false;
-  if (!state.lessons.every(l => text(l.id) && hasClass(l.classId) && text(l.name) && (l.description === undefined || text(l.description)) && typeof l.completed === "boolean" && (l.materialIds === undefined || (Array.isArray(l.materialIds) && l.materialIds.every(text))) && (l.attendanceCode === undefined || text(l.attendanceCode)) && (l.draft === undefined || (!!l.draft && text(l.draft.title) && text(l.draft.description) && text(l.draft.attendanceCode) && date(l.draft.startsAt) && date(l.draft.endsAt) && Array.isArray(l.draft.materialIds) && l.draft.materialIds.every(text))))) return false;
+  if (!validEnrollmentCycles(state)) return false;
+  if (state.lessonWorkflowVersion !== undefined && state.lessonWorkflowVersion !== 2) return false;
+  if (state.attendanceOverrides !== undefined) {
+    const events = state.attendanceOverrides;
+    if (!Array.isArray(events) || new Set(events.map(event => event?.id)).size !== events.length || !events.every(event => event && text(event.id) && date(event.at) && typeof event.before === 'boolean' && typeof event.after === 'boolean' && text(event.reason) && event.reason.trim() && state.users.some(user => user.id === event.actorId && user.role === 'manager') && state.enrollmentCycles?.some(cycle => cycle.id === event.cycleId && cycle.studentId === event.studentId && state.lessons.some(lesson => lesson.id === event.lessonId && lesson.classId === cycle.classId)))) return false;
+  }
+  if (!state.lessons.every(l => text(l.id) && hasClass(l.classId) && text(l.name) && (l.description === undefined || text(l.description)) && (l.location === undefined || text(l.location)) && typeof l.completed === "boolean" && (l.materialIds === undefined || (Array.isArray(l.materialIds) && l.materialIds.every(text))) && (l.attendanceCode === undefined || text(l.attendanceCode)) && (l.draft === undefined || (!!l.draft && text(l.draft.title) && (l.draft.location === undefined || text(l.draft.location)) && text(l.draft.description) && text(l.draft.attendanceCode) && date(l.draft.startsAt) && date(l.draft.endsAt) && Array.isArray(l.draft.materialIds) && l.draft.materialIds.every(text))))) return false;
   if (!state.quizzes.every(q => text(q.id) && hasClass(q.classId) && text(q.title) && ["test", "assignment"].includes(q.kind) && date(q.opensAt) && date(q.dueAt) && Number.isFinite(q.passingScore))) return false;
   if (!state.quizzes.every(q => q.contentLocked === undefined || typeof q.contentLocked === 'boolean')) return false;
   if (!state.quizzes.every(q => (q.status === undefined || ['draft', 'published'].includes(q.status)) && (q.questions === undefined || questions(q.questions)) && (q.attemptLimit === undefined || (Number.isSafeInteger(q.attemptLimit) && q.attemptLimit >= 1 && (q.kind === 'assignment' || q.attemptLimit === 1))) && (q.grants === undefined || (Array.isArray(q.grants) && q.grants.every(g => g && text(g.id) && (g.studentId === undefined || hasUser(g.studentId)) && Number.isSafeInteger(g.extraAttempts) && g.extraAttempts > 0 && (q.kind === 'test' || g.extraAttempts <= 10) && date(g.newDueAt) && text(g.reason) && date(g.grantedAt) && hasUser(g.grantedBy)))))) return false;
-  if (!state.attendance.every(a => hasUser(a.studentId) && state.lessons.some(l => l.id === a.lessonId) && typeof a.recorded === "boolean" && (a.failures === undefined || (Number.isInteger(a.failures) && a.failures >= 0 && a.failures <= 3)) && (a.absenceReason === undefined || text(a.absenceReason)))) return false;
+  if (!state.attendance.every(a => hasUser(a.studentId) && state.lessons.some(l => l.id === a.lessonId) && typeof a.recorded === "boolean" && (a.codeEntryRevoked === undefined || typeof a.codeEntryRevoked === "boolean") && (a.failures === undefined || (Number.isInteger(a.failures) && a.failures >= 0 && a.failures <= 3)) && (a.absenceReason === undefined || text(a.absenceReason)))) return false;
   if (!state.attempts.every(a => hasUser(a.studentId) && state.quizzes.some(q => q.id === a.quizId) && Number.isFinite(a.score) && typeof a.valid === "boolean")) return false;
+  if (!state.attempts.every(a => (a.invalidationReason === undefined || text(a.invalidationReason)) && (a.invalidatedAt === undefined || date(a.invalidatedAt)) && (a.invalidatedBy === undefined || state.users.some(user => user.id === a.invalidatedBy && user.role === "admin")))) return false;
+  if (!state.requests.every(r => (r.quizId === undefined || state.quizzes.some(q => q.id === r.quizId && q.classId === r.classId)) && (r.attemptId === undefined || state.attempts.some(a => a.id === r.attemptId && a.quizId === r.quizId && a.studentId === r.studentId) || (r.kind === "quiz-correction" && r.status !== "waiting")))) return false;
+  if (!state.requests.every(r => (r.kind !== "quiz-correction" || (!!r.attemptId && !!r.quizId && !!r.studentId)) && (r.attemptScore === undefined || (Number.isFinite(r.attemptScore) && r.attemptScore >= 0 && r.attemptScore <= 100)) && (r.attemptNumber === undefined || (Number.isSafeInteger(r.attemptNumber) && r.attemptNumber > 0)))) return false;
   if (!state.attempts.every(a => (a.id === undefined || text(a.id)) && (a.status === undefined || ['active', 'paused', 'submitted'].includes(a.status)) && (a.questions === undefined || questions(a.questions)) && (a.answers === undefined || (!!a.answers && typeof a.answers === 'object' && !Array.isArray(a.answers) && Object.values(a.answers).every(text))) && [a.startedAt, a.lastResumedAt, a.submittedAt, a.dueAt].every(v => v === undefined || date(v)) && [a.remainingMs, a.timeOffsetMs].every(v => v === undefined || (Number.isFinite(v) && v >= 0)) && (!(a.status === 'active' || a.status === 'paused') || (!!a.id && !!a.startedAt && !!a.lastResumedAt && !!a.dueAt && a.remainingMs !== undefined && questions(a.questions) && !a.valid)))) return false;
-  if (!state.requests.every(r => text(r.id) && hasClass(r.classId) && hasUser(r.senderId) && text(r.title) && text(r.description) && date(r.createdAt) && ["schedule", "enrollment", "test-retake", "teacher-leave", "attendance-correction", "absence"].includes(r.kind) && ["waiting", "approved", "declined", "cancelled"].includes(r.status)
+  if (!state.requests.every(r => text(r.id) && hasClass(r.classId) && hasUser(r.senderId) && text(r.title) && text(r.description) && date(r.createdAt) && ["schedule", "enrollment", "test-retake", "manager-leave", "attendance-correction", "quiz-correction", "absence"].includes(r.kind) && ["waiting", "approved", "declined", "cancelled"].includes(r.status)
     && (r.lessonId === undefined || state.lessons.some(l => l.id === r.lessonId && l.classId === r.classId))
     && (r.studentId === undefined || state.users.some(u => u.id === r.studentId && u.role === "student"))
     && [r.proposedStartsAt, r.proposedEndsAt, r.resolvedAt].every(v => v === undefined || date(v))
-    && [r.proposalTitle, r.proposalDescription, r.proposalAttendanceCode, r.leaveRequestId, r.resolutionReason].every(v => v === undefined || text(v))
+    && [r.proposalTitle, r.proposalLocation, r.proposalDescription, r.proposalAttendanceCode, r.leaveRequestId, r.resolutionReason].every(v => v === undefined || text(v))
     && (r.proposalMaterialIds === undefined || (Array.isArray(r.proposalMaterialIds) && r.proposalMaterialIds.every(text))))) return false;
   if (!state.notifications.every(n => text(n.id) && hasUser(n.recipientId) && text(n.title) && text(n.description) && text(n.href) && date(n.createdAt) && (n.read === undefined || typeof n.read === "boolean") && (n.senderId === undefined || hasUser(n.senderId)) && (n.messageId === undefined || text(n.messageId)))) return false;
   if (state.generalRequests !== undefined && (!Array.isArray(state.generalRequests) || !state.generalRequests.every(r => r && text(r.id) && hasUser(r.senderId) && hasUser(r.recipientId) && (r.classId === undefined || hasClass(r.classId)) && text(r.title) && text(r.description) && date(r.createdAt) && ["waiting", "approved", "declined"].includes(r.status) && (r.resolutionReason === undefined || text(r.resolutionReason)) && (r.resolvedAt === undefined || date(r.resolvedAt))))) return false;
@@ -76,6 +106,9 @@ export function isValidState(value: unknown): value is LmsState {
 export function migrateLessonState(state: LmsState): LmsState {
   if (!state || !Array.isArray(state.lessons) || !Array.isArray(state.requests) || !Array.isArray(state.schedules)) return state;
   const result = structuredClone(state);
+  for (const record of result.attendance ?? []) {
+    if (record && record.codeEntryRevoked === undefined && record.recorded === false && record.recordedAt && record.reason) record.codeEntryRevoked = true;
+  }
   const legacy: Record<string, string> = { r1: 'giai-tich-l10', r2: 'dai-so-l7', r3: 'nhap-mon-cntt-l8' };
   for (const request of result.requests) {
     if (!request || request.kind !== 'schedule' || request.lessonId) continue;
