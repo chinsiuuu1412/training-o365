@@ -111,6 +111,7 @@ test('retake approval requires deadline, rejection reason, approval notifies adm
 
 test('per-student and whole-class extra grants are scoped and assignment limited to ten', () => {
   let s = published(); const quizId = s.quizzes.at(-1)!.id;
+  s.quizzes.at(-1)!.dueAt = new Date(now - 1).toISOString();
   assert.throws(() => executeQuiz(s, 't1', { type: 'reopenQuiz', quizId, extraAttempts: 11, newDueAt: dueAt, reason: 'Thêm' }, now));
   s = executeQuiz(s, 't1', { type: 'reopenQuiz', quizId, studentId: 's1', extraAttempts: 2, newDueAt: dueAt, reason: 'Thêm' }, now);
   assert.equal(getQuizAvailability(s, quizId, 's1', now).remainingAttempts, 12); assert.equal(getQuizAvailability(s, quizId, 's2', now).remainingAttempts, 10);
@@ -140,13 +141,13 @@ test('custom initial assignment cap accepts more than ten while system timer fin
   assert.equal(syncDueQuizAttempts(final, now + 600001), final);
 });
 
-test('content remains locked after re-enrollment removes the last student attempt', () => {
+test('content remains locked and the old attempt is retained after re-enrollment', () => {
   let s = started(); const quiz = s.quizzes.at(-1)!;
   assert.equal(quiz.contentLocked, true);
   s = execute(s, 't1', { type: 'removeStudent', classId: quiz.classId, studentId: 's1', reason: 'Rút lớp' }, now);
   s = execute(s, 's1', { type: 'requestEnrollment', classId: quiz.classId, reason: 'Tham gia lại' }, now);
   s = execute(s, 't1', { type: 'decideEnrollment', requestId: s.requests.at(-1)!.id, decision: 'approved', reason: '' }, now);
-  assert.equal(s.attempts.filter(a => a.quizId === quiz.id).length, 0);
+  assert.equal(s.attempts.filter(a => a.quizId === quiz.id).length, 1);
   s = migrateQuizState(s);
   assert.equal(s.quizzes.at(-1)!.contentLocked, true);
   assert.throws(() => executeQuiz(s, 't1', { type: 'saveQuiz', quizId: quiz.id, classId: quiz.classId, kind: quiz.kind, title: 'Đổi đề', passingScore: 80, timeLimitMinutes: 20, opensAt: quiz.opensAt, dueAt: quiz.dueAt, questions }, now));
@@ -154,4 +155,80 @@ test('content remains locked after re-enrollment removes the last student attemp
   assert.equal(migrateQuizState(legacy).quizzes[0].contentLocked, true);
   const corrupt = createInitialState(); Object.assign(corrupt.quizzes[0], { contentLocked: 'invalid' });
   assert.equal(isValidState(migrateQuizState(corrupt)), false);
+});
+
+test('grade correction targets one submitted attempt, requires Admin approval and retains the surviving best score', () => {
+  let s = end(answer(started()));
+  const attemptId = s.attempts.at(-1)!.id!;
+  const quizId = s.attempts.at(-1)!.quizId;
+  s.attempts.push({ id: 'surviving-attempt', quizId, studentId: 's1', score: 25, valid: true, status: 'submitted' });
+  const before = JSON.stringify(s);
+  assert.throws(() => execute(s, 's1', { type: 'requestQuizCorrection', attemptId, reason: 'Không có quyền' }, now));
+  assert.throws(() => execute(s, 't2', { type: 'requestQuizCorrection', attemptId, reason: 'Không phụ trách' }, now));
+  assert.throws(() => execute(s, 't1', { type: 'removeQuizAttempt', attemptId, reason: 'Tự xóa' }, now));
+  assert.equal(JSON.stringify(s), before);
+  s = execute(s, 't1', { type: 'requestQuizCorrection', attemptId, reason: 'Đã xác minh vi phạm' }, now);
+  const requestId = s.requests.at(-1)!.id;
+  assert.equal(s.requests.at(-1)!.kind, 'quiz-correction');
+  assert.equal(s.requests.at(-1)!.attemptScore, 50);
+  assert.equal(s.requests.at(-1)!.attemptNumber, 1);
+  assert.equal(getQuizAvailability(s, quizId, 's1', now).bestScore, 50);
+  assert(isValidState(s));
+  assert.throws(() => execute(s, 't1', { type: 'requestQuizCorrection', attemptId, reason: 'Trùng' }, now));
+  s = execute(s, 'a1', { type: 'decideQuizCorrection', requestId, approved: true, reason: 'Xác nhận bằng chứng' }, now);
+  const invalidated = s.attempts.find(a => a.id === attemptId)!;
+  assert.equal(invalidated.valid, false);
+  assert.equal(invalidated.score, 50);
+  assert.equal(invalidated.invalidationReason, 'Đã xác minh vi phạm');
+  assert.equal(getQuizAvailability(s, quizId, 's1', now).bestScore, 25);
+  assert.equal(s.attempts.filter(a => a.quizId === quizId).length, 2);
+  assert(s.notifications.some(n => n.recipientId === 's1' && n.title.includes('vô hiệu hóa')));
+  assert.throws(() => execute(s, 'a1', { type: 'decideQuizCorrection', requestId, approved: true, reason: '' }, now));
+  assert(isValidState(s));
+});
+
+test('Quiz correction decline requires reason and direct Admin invalidation resolves stale pending corrections', () => {
+  let s = end(answer(started('test')), 'simulateQuizExpiry');
+  const attemptId = s.attempts.at(-1)!.id!;
+  assert.throws(() => execute(s, 'a1', { type: 'removeQuizAttempt', attemptId, reason: '' }, now));
+  s = execute(s, 't1', { type: 'requestQuizCorrection', attemptId, reason: 'Đề nghị xem xét' }, now);
+  let requestId = s.requests.at(-1)!.id;
+  assert.throws(() => execute(s, 'a1', { type: 'decideQuizCorrection', requestId, approved: false, reason: '' }, now));
+  s = execute(s, 'a1', { type: 'decideQuizCorrection', requestId, approved: false, reason: 'Chưa đủ bằng chứng' }, now);
+  assert.equal(s.attempts.at(-1)!.valid, true);
+  s = execute(s, 't1', { type: 'requestQuizCorrection', attemptId, reason: 'Bằng chứng mới' }, now);
+  requestId = s.requests.at(-1)!.id;
+  s = execute(s, 'a1', { type: 'removeQuizAttempt', attemptId, reason: 'Admin đã xác minh' }, now);
+  assert.equal(s.attempts.at(-1)!.valid, false);
+  assert.equal(s.requests.find(r => r.id === requestId)!.status, 'cancelled');
+  const activeState = started();
+  assert.throws(() => execute(activeState, 'a1', { type: 'removeQuizAttempt', attemptId: activeState.attempts.at(-1)!.id!, reason: 'Đang làm' }, now));
+});
+
+test('manual and automatic Quiz submissions notify the Student exactly once without answer keys', () => {
+  const original = started();
+  const quizId = original.quizzes.at(-1)!.id;
+  const automatic = syncDueQuizAttempts(answer(original), now + 600000);
+  const results = automatic.notifications.filter(n => n.recipientId === 's1' && n.title.startsWith('Kết quả Quiz'));
+  assert.equal(results.length, 1);
+  assert(results[0].description.includes('50/100'));
+  assert.equal(results[0].href, `/student/classes/giai-tich/quizzes/${quizId}`);
+  assert.equal(syncDueQuizAttempts(automatic, now + 600001), automatic);
+  assert.equal(end(answer(started())).notifications.filter(n => n.title.startsWith('Kết quả Quiz')).length, 1);
+});
+
+test('Assignment cannot be reopened before its deadline through the shared command service', () => {
+  const s = published();
+  assert.throws(() => executeQuiz(s, 't1', { type: 'reopenQuiz', quizId: s.quizzes.at(-1)!.id, reason: 'Chưa hết hạn', newDueAt: dueAt }, now), /hết hạn/);
+});
+
+test('a fresh enrollment cancels pending corrections from the prior enrollment without corrupting persisted history', () => {
+  let s = end(answer(started()));
+  const attemptId = s.attempts.at(-1)!.id!;
+  s = execute(s, 't1', { type: 'requestQuizCorrection', attemptId, reason: 'Kiểm tra lượt cũ' }, now);
+  s = execute(s, 't1', { type: 'removeStudent', classId: 'giai-tich', studentId: 's1', reason: 'Rời lớp' }, now);
+  s = execute(s, 's1', { type: 'requestEnrollment', classId: 'giai-tich', reason: 'Học lại' }, now);
+  s = execute(s, 't1', { type: 'decideEnrollment', requestId: s.requests.at(-1)!.id, decision: 'approved', reason: '' }, now);
+  assert.equal(s.requests.find(r => r.attemptId === attemptId)!.status, 'cancelled');
+  assert(isValidState(s));
 });

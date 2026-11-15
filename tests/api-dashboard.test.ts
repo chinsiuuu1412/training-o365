@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { ApiClient } from '../src/lib/api/client.ts';
+import { AuthService } from '../src/lib/api/auth.ts';
+import { DashboardService } from '../src/lib/api/dashboard.ts';
+import { createFixtureTransport } from '../src/mocks/api-fixture.ts';
+test('dashboard/agenda are response-derived, Student history scoped, staff totals not independently hardcoded', async () => {
+    const f = createFixtureTransport(), client = new ApiClient(f.transport), auth = new AuthService(client), service = new DashboardService(client);
+    await auth.login('admin@example.test', 'O365-demo-12345');
+    const admin = await service.get('admin');
+    assert(admin.student_count! >= 3);
+    assert(admin.classes.length >= 2);
+    await auth.logout();
+    await auth.login('manager1@example.test', 'O365-demo-12345');
+    const manager = await service.get('manager');
+    assert(manager.classes.every(row => 'manager_id' in row.class && row.class.manager_id === 2));
+    await auth.logout();
+    await auth.login('student001@sis.hust.edu.vn', 'O365-demo-12345');
+    const student = await service.get('student');
+    assert(student.classes.every(row => row.enrollments.every(item => item.enrollment.student_id === 5 && item.progress.enrollment_id === item.enrollment.id)));
+    assert(student.agenda.upcoming_sessions.every(row => !('attendance_code' in row)));
+    assert.equal(student.agenda.pending_enrollment_requests, 0);
+});

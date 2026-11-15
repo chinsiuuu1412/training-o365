@@ -112,7 +112,7 @@ test("ordinary issuance waits for class results finalization and creates one imm
   assert.equal(certificate.snapshot.attendancePercent, 100);
   assert.equal(state.classFinalizations![0].snapshots!.find(row => row.studentId === "s2")!.snapshot.quizPercent, 0);
   assert.equal(certificate.deliveries[0].status, "simulated");
-  assert.equal(certificate.deliveries[0].email, "s1@hocviet.example");
+  assert.equal(certificate.deliveries[0].email, "s1@sis.hust.edu.vn");
   assert.equal(synchronizeCertificates(state, now + 1000), state);
   assert.equal(finalize(state).certificates!.length, 1);
   assert.equal(original.certificates, undefined);
@@ -163,7 +163,7 @@ test("recovery restores ordinary certificate and cancels pending revocation acro
   assert.equal(state.completionRequests!.at(-1)!.status, "cancelled");
 });
 
-test("Teacher exceptions require Admin cross-approval, preserve real progress and stay effective after later point reductions", () => {
+test("Manager exceptions require Admin cross-approval, preserve real progress and stay effective after later point reductions", () => {
   let state = completedClassFixture();
   state.attendance.push({ studentId: "s2", lessonId: "giai-tich-l1", recorded: true });
   state = finalize(state);
@@ -179,7 +179,7 @@ test("Teacher exceptions require Admin cross-approval, preserve real progress an
   assert.equal(getCurrentCertificate(state, completionClass, "s2")!.status, "issued");
 });
 
-test("Admin proposals require the currently assigned Teacher and exceptions still wait for finalized results", () => {
+test("Admin proposals require the currently assigned Manager and exceptions still wait for finalized results", () => {
   let state = propose(completedClassFixture(), "exception", "a1");
   const id = state.completionRequests!.at(-1)!.id;
   assert.throws(() => execute(state, "a1", { type: "decideCompletion", requestId: id, approved: true, reason: "" }, now));
@@ -230,7 +230,7 @@ test("rejected revocation keeps Issued and does not loop into automatic review f
   assert.equal(synchronizeCertificates(state, now + 1), state);
 });
 
-test("appeals go through Teacher acceptance and Admin review; expired enrolled Students retain this right", () => {
+test("appeals go through Manager acceptance and Admin review; expired enrolled Students retain this right", () => {
   let state = finalize();
   state.classes.find(item => item.id === completionClass)!.expiresAt = "2026-11-21";
   state = execute(state, "s2", { type: "appealCompletion", classId: completionClass, reason: "Xin xem xét hoàn cảnh" }, now);
@@ -305,4 +305,38 @@ test("passing automatic submission restores eligibility before a stale revocatio
   const recovered = synchronizeCertificates(submitted, now + 60000);
   assert.equal(recovered.certificates![0].status, "issued");
   assert.equal(recovered.completionRequests![0].status, "cancelled");
+});
+
+test("pending Quiz correction blocks finalization and an approved invalidation invalidates the seal and reviews a normal certificate", () => {
+  let state = completedClassFixture();
+  state.classes.find(course => course.id === completionClass)!.quizThreshold = 100;
+  state = finalize(state);
+  assert.equal(state.certificates![0].status, "issued");
+  const attemptId = state.attempts.find(attempt => attempt.studentId === "s1" && attempt.quizId === "giai-tich-q1")!.id!;
+  state = execute(state, "t1", { type: "requestQuizCorrection", attemptId, reason: "Vi phạm đã được xác minh" }, now);
+  assert.equal(getClassFinalization(state, completionClass, now).finalized, false);
+  assert.throws(() => execute(state, "a1", { type: "finalizeClassResults", classId: completionClass }, now));
+  state = execute(state, "a1", { type: "decideQuizCorrection", requestId: state.requests.at(-1)!.id, approved: true, reason: "Chấp thuận" }, now);
+  state = synchronizeCertificates(state, now);
+  assert.equal(state.certificates![0].status, "under-review");
+  assert.equal(getClassFinalization(state, completionClass, now).finalized, false);
+  assert.equal(getProgressDetails(state, completionClass, "s1").quizPercent, 50);
+  assert.equal(state.certificates![0].snapshot.quizPercent, 100);
+  assert(isValidState(state));
+});
+
+test("legacy Attendance corrections are cancelled by migration while expired retakes can be declined", async () => {
+  let state = completedClassFixture();
+  state.classes.find(course => course.id === completionClass)!.expiresAt = "2026-11-21";
+  state.requests.push({ id: "expired-retake", kind: "test-retake", classId: completionClass, quizId: "giai-tich-q1", senderId: "s1", title: "Làm lại trước khi hết hạn", description: "Xin xem xét", createdAt: "2026-11-20T00:00:00Z", status: "waiting" });
+  state.requests.push({ id: "expired-attendance", kind: "attendance-correction", classId: completionClass, lessonId: "giai-tich-l1", studentId: "s1", senderId: "t1", title: "Xem lại điểm danh", description: "Xin xem xét", createdAt: "2026-11-20T00:00:00Z", status: "waiting" });
+  assert.equal(getClassFinalization(state, completionClass, now).pendingGradeRequests, 2);
+  state = execute(state, "t1", { type: "decideRetake", requestId: "expired-retake", approved: false, reason: "Lớp đã hết hạn" }, now);
+  const { migrateScheduleAttendance } = await import("../src/mocks/services/lessons.ts");
+  delete state.lessonWorkflowVersion;
+  state = migrateScheduleAttendance(state);
+  assert.equal(getClassFinalization(state, completionClass, now).pendingGradeRequests, 0);
+  state = execute(state, "a1", { type: "finalizeClassResults", classId: completionClass }, now);
+  assert(getClassFinalization(state, completionClass, now).finalized);
+  assert(state.attempts.every(attempt => attempt.valid));
 });

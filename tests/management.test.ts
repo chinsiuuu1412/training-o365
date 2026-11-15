@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+test("persisted relationships reject duplicate identities and dangling or cross-class Quiz request references", async () => {
+  const { createInitialState, isValidState } = await import("../src/mocks/state.ts");
+  const duplicate = createInitialState(); duplicate.users.push({ ...duplicate.users[0] });
+  assert.equal(isValidState(duplicate), false);
+  const dangling = createInitialState(); dangling.requests.find(r => r.kind === 'test-retake')!.quizId = 'missing-quiz';
+  assert.equal(isValidState(dangling), false);
+  const crossClass = createInitialState(); crossClass.requests.find(r => r.kind === 'test-retake')!.quizId = 'dai-so-q1';
+  assert.equal(isValidState(crossClass), false);
+});
+
 test("stored snapshot validation rejects missing roles and malformed rows before rendering", async () => {
   const { createInitialState, isValidState } = await import("../src/mocks/state.ts");
   const state = createInitialState();
@@ -64,25 +74,25 @@ test("full/expired classes and suspended actors cannot enroll or approve", async
   state.classes[1].expiresAt = "2027-02-28";
   const suspended = execute(state, "a1", { type: "setAccountStatus", userId: "t1", suspended: true, reason: "Tạm ngưng công tác" }, now);
   assert.equal(suspended.enrollments.length, state.enrollments.length);
-  assert.equal(suspended.classes[1].teacherId, "t1");
+  assert.equal(suspended.classes[1].managerId, "t1");
   assert.throws(() => execute(suspended, "t1", { type: "decideEnrollment", requestId: "r4", decision: "approved", reason: "" }, now));
 });
 
 test("accounts validate duplicate email; reassignment preserves records and transfers queue", async () => {
   const { createInitialState } = await import("../src/mocks/state.ts");
   const { execute } = await import("../src/mocks/services/management.ts");
-  const { getTeacherDashboard } = await import("../src/mocks/services/dashboard.ts");
+  const { getManagerDashboard } = await import("../src/mocks/services/dashboard.ts");
   let state = createInitialState();
   const now = Date.parse(state.referenceTime);
   assert.throws(() => execute(state, "a1", { type: "saveAccount", role: "student", name: "Người trùng", email: state.users[0].email!.toUpperCase(), phone: "" }, now));
   const course = state.classes[1];
   assert.throws(() => execute(state, "a1", { type: "saveClass", course: { ...course, capacity: 1 }, reason: "" }, now));
-  assert.throws(() => execute(state, "a1", { type: "saveClass", course: { ...course, teacherId: "t2" }, reason: "" }, now));
+  assert.throws(() => execute(state, "a1", { type: "saveClass", course: { ...course, managerId: "t2" }, reason: "" }, now));
   const originalMaterials = state.materials;
-  state = execute(state, "a1", { type: "saveClass", course: { ...course, teacherId: "t2" }, reason: "Phân công lại lịch dạy" }, now);
+  state = execute(state, "a1", { type: "saveClass", course: { ...course, managerId: "t2" }, reason: "Phân công lại lịch dạy" }, now);
   assert.deepEqual(state.materials, originalMaterials);
-  assert.equal(getTeacherDashboard("t1", state).enrollmentRequests.length, 0);
-  assert.equal(getTeacherDashboard("t2", state).enrollmentRequests.length, 1);
+  assert.equal(getManagerDashboard("t1", state).enrollmentRequests.length, 0);
+  assert.equal(getManagerDashboard("t2", state).enrollmentRequests.length, 1);
   assert.throws(() => execute(state, "t1", { type: "decideEnrollment", requestId: "r4", decision: "approved", reason: "" }, now));
 });
 

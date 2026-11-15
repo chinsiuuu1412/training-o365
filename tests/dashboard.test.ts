@@ -6,7 +6,7 @@ import { baseState } from "../src/mocks/state.ts";
 import { getProgressDetails } from "../src/mocks/services/progress.ts";
 import { users, classes, enrollments, lessons, attendance, quizzes, attempts, requests, schedules, assignmentDrafts, notifications } from "../src/mocks/seed.ts";
 test("seed references point to real entities", () => {
-  for (const c of classes) assert(users.some(u => u.id === c.teacherId && u.role === "teacher"));
+  for (const c of classes) assert(users.some(u => u.id === c.managerId && u.role === "manager"));
   for (const e of enrollments) { assert(classes.some(c => c.id === e.classId)); assert(users.some(u => u.id === e.studentId && u.role === "student")); }
   for (const a of attendance) assert(lessons.some(l => l.id === a.lessonId));
   for (const a of attempts) assert(quizzes.some(q => q.id === a.quizId));
@@ -16,7 +16,7 @@ test("seed references point to real entities", () => {
   for (const n of notifications) assert(users.some(u => u.id === n.recipientId));
   for (const d of assignmentDrafts) { assert(quizzes.some(q => q.id === d.quizId && q.kind === "assignment")); assert(d.answeredQuestions <= d.totalQuestions); }
   for (const r of requests.filter(r => r.kind === "enrollment")) assert(enrollments.some(e => e.classId === r.classId && e.studentId === r.senderId && e.status === "pending"));
-  for (const r of requests.filter(r => r.kind === "schedule")) assert.equal(classes.find(c => c.id === r.classId)!.teacherId, r.senderId);
+  for (const r of requests.filter(r => r.kind === "schedule")) assert.equal(classes.find(c => c.id === r.classId)!.managerId, r.senderId);
   for (const r of requests.filter(r => r.kind === "test-retake")) {
     const quiz = quizzes.find(q => q.id === r.quizId)!;
     assert.equal(quiz.kind, "test");
@@ -38,17 +38,17 @@ test("unknown class and zero denominators are safe", () => {
 });
 test("dashboard totals are derived and memberships are not unique student counts", () => {
   const data = getDashboard();
-  assert.deepEqual(data.stats, { students: 12, teachers: 3, classes: 3, pending: 3 });
+  assert.deepEqual(data.stats, { students: 12, managers: 3, classes: 3, pending: 3 });
   assert.equal(data.classes.reduce((n, c) => n + c.students, 0), enrollments.filter(e => e.status === "approved").length);
 });
 
-test("teacher sees only assigned classes, their pending requests and recipients", () => {
-  assert.equal(typeof service.getTeacherDashboard, "function");
-  const data = service.getTeacherDashboard("t1");
+test("manager sees only assigned classes, their pending requests and recipients", () => {
+  assert.equal(typeof service.getManagerDashboard, "function");
+  const data = service.getManagerDashboard("t1");
   assert.deepEqual(data.classes.map(c => c.id), ["giai-tich", "dai-so"]);
   assert.equal(data.enrollmentRequests.length, 1);
   assert.equal(data.retakeRequests.length, 2);
-  assert(data.enrollmentRequests.every(r => r.status === "waiting" && r.course.teacherId === "t1"));
+  assert(data.enrollmentRequests.every(r => r.status === "waiting" && r.course.managerId === "t1"));
   assert(data.retakeRequests.every(r => r.status === "waiting" && r.quiz?.kind === "test"));
   assert(data.notifications.every(n => n.recipientId === "t1"));
   assert(!data.upcomingLessons.some(l => l.classId === "nhap-mon-cntt"));
@@ -59,7 +59,7 @@ test("student uses shared records, confirmed future lessons and Assignment draft
   const data = service.getStudentDashboard("s1");
   assert.equal(data.classes.length, 3);
   const math = data.classes.find(c => c.id === "giai-tich")!;
-  assert.equal(math.teacher.id, "t1");
+  assert.equal(math.manager.id, "t1");
   assert.deepEqual(math.progress, { attendance: 50, quiz: 50 });
   assert.equal(data.continueLearning?.quiz.id, "giai-tich-q6");
   assert.equal(data.continueLearning?.quiz.kind, "assignment");
@@ -73,9 +73,9 @@ test("student uses shared records, confirmed future lessons and Assignment draft
 
 test("unknown/unassigned roles and pending-only membership return empty scoped data", () => {
   assert.equal(typeof service.getStudentDashboard, "function");
-  assert.equal(typeof service.getTeacherDashboard, "function");
-  assert.equal(service.getTeacherDashboard("t2").classes.length, 0);
-  assert.equal(service.getTeacherDashboard("s1").classes.length, 0);
+  assert.equal(typeof service.getManagerDashboard, "function");
+  assert.equal(service.getManagerDashboard("t2").classes.length, 0);
+  assert.equal(service.getManagerDashboard("s1").classes.length, 0);
   assert.equal(service.getStudentDashboard("missing").classes.length, 0);
   const data = service.getStudentDashboard("s3");
   assert(!data.classes.some(c => c.id === "dai-so"));
@@ -101,7 +101,7 @@ test("resolved requests, expired classes and past schedules do not appear as pen
   const prior = { status: request.status, startsAt: schedule.startsAt, expiresAt: course.expiresAt };
   try {
     request.status = "approved";
-    assert.equal(service.getTeacherDashboard("t1").enrollmentRequests.length, 0);
+    assert.equal(service.getManagerDashboard("t1").enrollmentRequests.length, 0);
     schedule.startsAt = "2026-11-13T18:00:00+07:00";
     assert(!service.getStudentDashboard("s1").upcomingLessons.some(l => l.id === schedule.id));
     course.expiresAt = "2026-11-13";

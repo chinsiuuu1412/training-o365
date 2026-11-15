@@ -12,7 +12,7 @@ const upload = {
   fileName: "bai-giang.pdf", sizeBytes: 1024, mimeType: "application/pdf",
 };
 
-test("material metadata requires assigned Teacher, valid file fields, same-class lesson and future expiration", () => {
+test("material metadata requires assigned Manager, valid file fields, same-class lesson and future expiration", () => {
   const original = createInitialState();
   const before = JSON.stringify(original);
   for (const actor of ["a1", "s1", "t3"]) assert.throws(() => execute(original, actor, upload, now));
@@ -45,14 +45,14 @@ test("all file videos expire, only YouTube videos bypass material expiry, class 
   assert.throws(() => execute(state, "t1", upload, now));
 });
 
-test("removal requires Admin reason, notifies current Teacher and clears current/draft/pending lesson attachments", () => {
+test("removal requires Admin reason, notifies current Manager and clears current/draft/pending lesson attachments", () => {
   let state = execute(createInitialState(), "t1", upload, now);
   const material = state.materials.at(-1)!;
   const lesson = state.lessons.find(item => item.id === upload.lessonId)!;
   lesson.draft = { title: "Draft", description: "Details", startsAt: new Date(now + 86400000).toISOString(), endsAt: new Date(now + 90000000).toISOString(), attendanceCode: "DEMO", materialIds: [material.id] };
   state.requests[0].proposalMaterialIds = [material.id];
   assert.throws(() => execute(state, "a1", { type: "removeMaterial", materialId: material.id, reason: "" }, now));
-  assert.throws(() => execute(state, "t3", { type: "removeMaterial", materialId: material.id, reason: "Wrong teacher" }, now));
+  assert.throws(() => execute(state, "t3", { type: "removeMaterial", materialId: material.id, reason: "Wrong manager" }, now));
   state = execute(state, "a1", { type: "removeMaterial", materialId: material.id, reason: "Nội dung không phù hợp" }, now);
   assert(!getLibraryMaterials(state, "s1").some(item => item.id === material.id));
   assert.equal(getMaterialStatus(state, "t1", state.materials.at(-1)!, now), "removed");
@@ -68,7 +68,7 @@ test("removed enrollments, changed assignment and suspended accounts lose Librar
   const material = state.materials.find(item => item.id === "material-giai-tich")!;
   state.enrollments.find(enrollment => enrollment.studentId === "s1" && enrollment.classId === "giai-tich")!.status = "removed";
   assert.equal(getMaterialStatus(state, "s1", material, now), "unavailable");
-  state.classes.find(course => course.id === "giai-tich")!.teacherId = "t3";
+  state.classes.find(course => course.id === "giai-tich")!.managerId = "t3";
   assert.equal(getMaterialStatus(state, "t1", material, now), "unavailable");
   assert.equal(getMaterialStatus(state, "t3", material, now), "available");
   state.users.find(user => user.id === "t3")!.status = "suspended";
@@ -79,7 +79,7 @@ test("removed enrollments, changed assignment and suspended accounts lose Librar
 test("notification direct recipients enforce role and current enrollment, revalidated when sending", () => {
   const state = createInitialState();
   assert(getDirectRecipients(state, "a1").every(user => user.role !== "admin"));
-  assert(getDirectRecipients(state, "s1").every(user => user.role === "teacher"));
+  assert(getDirectRecipients(state, "s1").every(user => user.role === "manager"));
   assert(!getDirectRecipients(state, "s1").some(user => user.id === "t2"));
   assert(getDirectRecipients(state, "t1").some(user => user.id === "a1"));
   const command = { type: "sendNotification" as const, title: "Thông báo", description: "Nội dung", audience: { type: "people" as const, recipientIds: ["a1"] } };
@@ -91,13 +91,13 @@ test("notification direct recipients enforce role and current enrollment, revali
   assert.throws(() => execute(state, "s1", { ...command, audience: { type: "people", recipientIds: ["t1"] } }, now));
 });
 
-test("class broadcasts allow student selection/exclusion, optional Teachers, and deduplicate across classes", () => {
+test("class broadcasts allow student selection/exclusion, optional Managers, and deduplicate across classes", () => {
   const state = createInitialState();
-  const audience = { type: "classes" as const, classIds: ["giai-tich", "dai-so"], includeTeachers: true, studentIds: ["s1", "s1"] };
+  const audience = { type: "classes" as const, classIds: ["giai-tich", "dai-so"], includeManagers: true, studentIds: ["s1", "s1"] };
   assert.deepEqual(getAudienceRecipients(state, "a1", audience).sort(), ["s1", "t1"]);
   assert.throws(() => getAudienceRecipients(state, "t1", audience));
-  assert.throws(() => getAudienceRecipients(state, "s1", { ...audience, includeTeachers: false }));
-  assert.throws(() => getAudienceRecipients(state, "t3", { ...audience, includeTeachers: false }));
+  assert.throws(() => getAudienceRecipients(state, "s1", { ...audience, includeManagers: false }));
+  assert.throws(() => getAudienceRecipients(state, "t3", { ...audience, includeManagers: false }));
   const sent = execute(state, "a1", { type: "sendNotification", title: "Hai lớp", description: "Nội dung", audience }, now);
   const messages = sent.notifications.filter(item => item.title === "Hai lớp");
   assert.equal(messages.length, 2);
@@ -119,7 +119,7 @@ test("read/unread notification state is recipient-specific and persists while se
   assert.equal(state.notifications.find(item => item.id === notification.id)!.read, undefined);
 });
 
-test("general requests allow Student to Teacher and Teacher to Admin, feedback is mandatory and decisions cannot repeat", () => {
+test("general requests allow Student to Manager and Manager to Admin, feedback is mandatory and decisions cannot repeat", () => {
   const original = createInitialState();
   const command = { type: "sendGeneralRequest" as const, recipientId: "t1", title: "Xin tư vấn", description: "Em cần hướng dẫn", classId: "giai-tich" };
   let state = execute(original, "s1", command, now);
@@ -155,7 +155,7 @@ test("request receipts are scoped per user and revision, including workflow resu
   state = execute(state, "s1", { type: "markRequestRead", requestId: request.id, source: "workflow", read: true }, now);
   state.requests.find(item => item.id === request.id)!.status = "declined";
   assert(isRequestUnread(state, "s1", getRequestItems(state, "s1").find(item => item.id === request.id)!));
-  state.classes.find(course => course.id === "giai-tich")!.teacherId = "t3";
+  state.classes.find(course => course.id === "giai-tich")!.managerId = "t3";
   assert(!getRequestItems(state, "t1").some(item => item.id === "r6"));
   assert(getRequestItems(state, "t3").some(item => item.id === "r6"));
 });

@@ -1,107 +1,134 @@
-import { test } from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createInitialState, isValidState, migrateLessonState } from '../src/mocks/state.ts';
-import { executeLesson, getLessonStatus, getAttendanceStatus } from '../src/mocks/services/lessons.ts';
-import { getDashboard } from '../src/mocks/services/dashboard.ts';
-const lessonId = 'giai-tich-l11';
-const now = Date.parse('2026-11-14T02:00:00Z');
-const startsAt = '2026-11-18T02:00:00Z', endsAt = '2026-11-18T04:00:00Z';
-function draft() { return executeLesson(createInitialState(), 't1', { type: 'saveLesson', lessonId, classId: 'giai-tich', title: 'Tích phân', description: 'Bài học', startsAt, endsAt, materialIds: ['material-giai-tich'], attendanceCode: '123456' }, now); }
-function approved() { const s = executeLesson(draft(), 't1', {type:'submitSchedule',lessonId},now); const r = s.requests.at(-1)!; return executeLesson(s,'a1',{type:'decideSchedule',requestId:r.id,approved:true,reason:''},now); }
-function confirmed() { return executeLesson(approved(),'t1',{type:'confirmLesson',lessonId}, Date.parse(startsAt)-86400000); }
+import { createInitialState, isValidState } from '../src/mocks/state.ts';
+import { executeLesson, getLessonStatus, getAttendanceStatus, getAttendanceHistory, migrateScheduleAttendance } from '../src/mocks/services/lessons.ts';
+import { execute } from '../src/mocks/services/management.ts';
+import { getProgressDetails } from '../src/mocks/services/progress.ts';
+import { currentCycleId } from '../src/mocks/services/enrollment-cycles.ts';
+import { synchronizeMockState } from '../src/mocks/services/synchronization.ts';
+import { decodeDemoStore } from '../src/mocks/demo-storage.ts';
+import { loginMock, requireMockSession } from '../src/mocks/services/authentication.ts';
 
-test('teaching progress counts a confirmed lesson when simulated time reaches its end',()=>{
- const state=confirmed();state.referenceTime=endsAt;
- // Eight historical lessons, seeded confirmed lesson 9, and the newly confirmed slot.
- assert.equal(getDashboard(state).classes.find(c=>c.id==='giai-tich')!.completedLessons,10);
+const lessonId='giai-tich-l11', now=Date.parse('2026-11-14T02:00:00Z');
+const startsAt='2026-11-18T02:00:00Z', endsAt='2026-11-18T04:00:00Z', start=Date.parse(startsAt), end=Date.parse(endsAt);
+function draft(){return executeLesson(createInitialState(),'t1',{type:'saveLesson',lessonId,classId:'giai-tich',title:'Buổi thử nghiệm',location:'Phòng demo A',description:'Dữ liệu tổng hợp',startsAt,endsAt,materialIds:['material-giai-tich'],attendanceCode:'O365'},now);}
+function approved(){const saved=executeLesson(draft(),'t1',{type:'submitSchedule',lessonId},now);return executeLesson(saved,'a1',{type:'decideSchedule',requestId:saved.requests.at(-1)!.id,approved:true,reason:''},now);}
+function override(state:ReturnType<typeof approved>, recorded:boolean,time=start,studentId='s1'){return executeLesson(state,'t1',{type:'overrideAttendance',lessonId,studentId,recorded,reason:'Đã xác minh tham gia'},time);}
+
+test('draft and pending are not effective; approved lessons open without 24h confirmation',()=>{
+ let state=draft();assert.equal(getLessonStatus(state,lessonId,start),'draft');
+ state=executeLesson(state,'t1',{type:'submitSchedule',lessonId},now);assert.equal(getLessonStatus(state,lessonId,start),'waiting');
+ assert.throws(()=>executeLesson(state,'s1',{type:'enterAttendance',lessonId,code:'O365'},start));
+ state=executeLesson(state,'a1',{type:'decideSchedule',requestId:state.requests.at(-1)!.id,approved:true,reason:''},now);
+ assert.equal(getLessonStatus(state,lessonId,start-1),'approved');assert.equal(getLessonStatus(state,lessonId,start),'active');assert.equal(getLessonStatus(state,lessonId,end),'completed');
+ assert(isValidState(state));
 });
-test('draft uses fixed slot, request publishes only after approval and exact 24h confirmation works', () => {
- let s = draft(); assert.equal(s.lessons.length,createInitialState().lessons.length); assert.equal(getLessonStatus(s,lessonId,now),'draft');
- s=approved(); assert.equal(getLessonStatus(s,lessonId,now),'approved');
- assert.throws(()=>executeLesson(s,'t1',{type:'confirmLesson',lessonId},Date.parse(startsAt)-86400000+1));
- assert.equal(getLessonStatus(s,lessonId,Date.parse(startsAt)-86400000+1),'late');
- s=confirmed(); assert.equal(getLessonStatus(s,lessonId,Date.parse(startsAt)),'active'); assert(isValidState(s));
+test('pending/rejected changes retain old approved schedule, title, code and slot; approval commits atomically',()=>{
+ const original=approved(),count=original.lessons.length;
+ const change={type:'saveLesson' as const,lessonId,classId:'giai-tich',title:'Tên mới',location:'Phòng demo B',description:'Mô tả mới',startsAt:'2026-11-20T02:00:00Z',endsAt:'2026-11-20T04:00:00Z',materialIds:[],attendanceCode:'NEW'};
+ let state=executeLesson(original,'t1',change,now);state=executeLesson(state,'t1',{type:'submitSchedule',lessonId},now);
+ const requestId=state.requests.at(-1)!.id;
+ assert.equal(state.lessons.find(l=>l.id===lessonId)!.location,'Phòng demo A');
+ assert.equal(state.requests.at(-1)!.proposalLocation,'Phòng demo B');
+ assert.equal(state.schedules.find(s=>s.lessonId===lessonId)!.startsAt,startsAt);assert.equal(state.lessons.find(l=>l.id===lessonId)!.attendanceCode,'O365');
+ assert.throws(()=>executeLesson(state,'a1',{type:'decideSchedule',requestId,approved:false,reason:' '},now));
+ const rejected=executeLesson(state,'a1',{type:'decideSchedule',requestId,approved:false,reason:'Cần đổi giờ'},now);
+ assert.equal(rejected.schedules.find(s=>s.lessonId===lessonId)!.startsAt,startsAt);assert.equal(getLessonStatus(rejected,lessonId,start),'active');assert.equal(rejected.lessons.find(l=>l.id===lessonId)!.location,'Phòng demo A');
+ state=executeLesson(rejected,'t1',change,now);state=executeLesson(state,'t1',{type:'submitSchedule',lessonId},now);
+ state=executeLesson(state,'a1',{type:'decideSchedule',requestId:state.requests.at(-1)!.id,approved:true,reason:''},now);
+ assert.equal(state.schedules.find(s=>s.lessonId===lessonId)!.startsAt,change.startsAt);assert.equal(state.lessons.find(l=>l.id===lessonId)!.name,change.title);assert.equal(state.lessons.length,count);assert.equal(state.lessons.find(l=>l.id===lessonId)!.location,'Phòng demo B');
+ assert.deepEqual(original,approved());
 });
-test('approved schedule edits remain current until approval, rejection requires reason and immutable errors', () => {
- const initial=confirmed(); const saved=executeLesson(initial,'t1',{type:'saveLesson',lessonId,classId:'giai-tich',title:'Mới',description:'Đổi lịch',startsAt:'2026-11-20T02:00:00Z',endsAt:'2026-11-20T04:00:00Z',materialIds:[],attendanceCode:'ABC'},now);
- assert.equal(saved.schedules.find(s=>s.lessonId===lessonId)!.startsAt,startsAt);
- const submitted=executeLesson(saved,'t1',{type:'submitSchedule',lessonId},now); const r=submitted.requests.at(-1)!;
- assert.throws(()=>executeLesson(submitted,'a1',{type:'decideSchedule',requestId:r.id,approved:false,reason:''},now));
- const accepted=executeLesson(submitted,'a1',{type:'decideSchedule',requestId:r.id,approved:true,reason:''},now);
- assert.equal(accepted.schedules.find(s=>s.lessonId===lessonId)!.status,'approved'); assert.equal(initial.lessons.find(l=>l.id===lessonId)!.name,'Tích phân');
+test('one pending request per lesson; role/scope/expiry guards and live/completed schedules reject edits',()=>{
+ const initial=approved();const change={type:'saveLesson' as const,lessonId,classId:'giai-tich',title:'Mới',description:'',startsAt:'2026-11-20T02:00:00Z',endsAt:'2026-11-20T04:00:00Z',materialIds:[],attendanceCode:'NEW'};
+ for(const actor of ['s1','t2','a1'])assert.throws(()=>executeLesson(initial,actor,change,now));
+ for(const time of [start,end])assert.throws(()=>executeLesson(initial,'t1',change,time));
+ let state=executeLesson(initial,'t1',change,now);state=executeLesson(state,'t1',{type:'submitSchedule',lessonId},now);
+ assert.throws(()=>executeLesson(state,'t1',{type:'submitSchedule',lessonId},now));
+ assert.throws(()=>executeLesson(state,'a1',{type:'decideSchedule',requestId:state.requests.at(-1)!.id,approved:true,reason:''},start));
+ const expired=structuredClone(initial);expired.classes[0].expiresAt='2026-11-13';assert.throws(()=>executeLesson(expired,'t1',change,now));
+ assert.throws(()=>executeLesson(initial,'t1',{...change,materialIds:['material-dai-so']},now));
 });
-test('three wrong attempts persist, manual attendance overrides lock, deduplicates and updates progress', async () => {
- let s=confirmed(); const active=Date.parse(startsAt);
- for(let i=1;i<=3;i++){s=executeLesson(s,'s1',{type:'enterAttendance',lessonId,code:'wrong'},active);assert.equal(getAttendanceStatus(JSON.parse(JSON.stringify(s)),lessonId,'s1',active).failures,i);}
- assert.throws(()=>executeLesson(s,'s1',{type:'enterAttendance',lessonId,code:'123456'},active));
- assert.throws(()=>executeLesson(s,'t2',{type:'manualAttendance',lessonId,studentId:'s1',reason:'Có mặt'},active));
- const {getStudentDashboard}=await import('../src/mocks/services/dashboard.ts'); const before=getStudentDashboard('s1',s).classes[0].progress.attendance;
- s=executeLesson(s,'t1',{type:'manualAttendance',lessonId,studentId:'s1',reason:'Đã xác minh'},active);
- assert(getStudentDashboard('s1',s).classes[0].progress.attendance>before); assert.throws(()=>executeLesson(s,'s1',{type:'requestAbsence',lessonId,reason:'Ốm'},active));
- assert.equal(s.attendance.filter(a=>a.lessonId===lessonId&&a.studentId==='s1').length,1);
- assert.throws(()=>executeLesson(s,'t1',{type:'manualAttendance',lessonId,studentId:'s2',reason:'Có mặt'},Date.parse(endsAt)));
+test('code window is [start,end), failed windows consume no attempts, success retries are idempotent',()=>{
+ const initial=approved();
+ for(const time of [start-1,end])assert.throws(()=>executeLesson(initial,'s1',{type:'enterAttendance',lessonId,code:'wrong'},time));
+ assert.equal(getAttendanceStatus(initial,lessonId,'s1',start).failures,0);
+ const state=executeLesson(initial,'s1',{type:'enterAttendance',lessonId,code:'O365'},start);
+ const retried=executeLesson(state,'s1',{type:'enterAttendance',lessonId,code:'O365'},start+1);
+ assert.deepEqual(retried,state);assert.equal(state.attendance.filter(row=>row.lessonId===lessonId&&row.studentId==='s1').length,1);
+ assert.equal(getProgressDetails(state,'giai-tich','s1').attendedSessions,getProgressDetails(initial,'giai-tich','s1').attendedSessions+1);
+ assert.throws(()=>executeLesson(state,'s1',{type:'requestAbsence',lessonId,reason:'Xin nghỉ'},start));
 });
-test('valid code active window, approved absence grants no credit, correction requires admin approval',()=>{
- let s=confirmed(); const active=Date.parse(startsAt);
- assert.throws(()=>executeLesson(s,'s1',{type:'enterAttendance',lessonId,code:'123456'},active-1));
- s=executeLesson(s,'s2',{type:'requestAbsence',lessonId,reason:'Bị ốm'},now); assert(getAttendanceStatus(s,lessonId,'s2',active).absence); assert(!getAttendanceStatus(s,lessonId,'s2',active).recorded);
- s=executeLesson(s,'s1',{type:'enterAttendance',lessonId,code:'123456'},active); assert(getAttendanceStatus(s,lessonId,'s1',active).recorded);
- s=executeLesson(s,'t1',{type:'requestAttendanceCorrection',lessonId,studentId:'s1',reason:'Không tham gia'},active); assert(getAttendanceStatus(s,lessonId,'s1',active).recorded);
- const r=s.requests.at(-1)!; s=executeLesson(s,'a1',{type:'decideAttendanceCorrection',requestId:r.id,approved:true,reason:''},active); assert(!getAttendanceStatus(s,lessonId,'s1',active).recorded);
+test('three incorrect attempts survive serialization/reload; Manager can verify after lock',()=>{
+ let state=approved();
+ for(let i=1;i<=3;i++){state=executeLesson(state,'s1',{type:'enterAttendance',lessonId,code:'wrong'},start);state=JSON.parse(JSON.stringify(state));assert.equal(getAttendanceStatus(state,lessonId,'s1',start).failures,i);}
+ assert.throws(()=>executeLesson(state,'s1',{type:'enterAttendance',lessonId,code:'O365'},start));
+ state=override(state,true,end+1000);assert(getAttendanceStatus(state,lessonId,'s1',end+1000).recorded);assert(isValidState(state));
 });
-test('makeup requires reason and 24h, uses same slot and independent leave approval',()=>{
- let s=confirmed(); const count=s.lessons.length;
- s=executeLesson(s,'t1',{type:'requestMakeup',lessonId,startsAt:'2026-11-21T02:00:00Z',endsAt:'2026-11-21T04:00:00Z',reason:'Công tác'},now);
- const leave=s.requests.find(r=>r.kind==='teacher-leave'&&r.lessonId===lessonId)!; const proposal=s.requests.at(-1)!; assert(leave);
- s=executeLesson(s,'a1',{type:'decideSchedule',requestId:leave.id,approved:true,reason:''},now);
- assert.equal(s.schedules.find(v=>v.lessonId===lessonId)!.status,'cancelled');
- s=executeLesson(s,'a1',{type:'decideSchedule',requestId:proposal.id,approved:true,reason:''},now);
- assert.equal(s.lessons.length,count); assert.equal(s.schedules.find(v=>v.lessonId===lessonId)!.status,'approved');
+test('Manager override supports add/remove/restore with actor/time/before-after and blocks code restoration',()=>{
+ let state=approved();assert.throws(()=>override(state,true,start-1));
+ state=override(state,true);state=override(state,false,start+1000);
+ assert(getAttendanceStatus(state,lessonId,'s1',start+1000).revoked);
+ assert.throws(()=>executeLesson(state,'s1',{type:'enterAttendance',lessonId,code:'O365'},start+1001));
+ state=override(state,true,end+1);
+ const history=getAttendanceHistory(state,'t1',lessonId,'s1');
+ assert.deepEqual(history.map(event=>[event.before,event.after]),[[false,true],[true,false],[false,true]]);
+ assert(history.every(event=>event.actorId==='t1'&&event.reason&&Number.isFinite(Date.parse(event.at))));
+ assert.equal(history[2].at,new Date(end+1).toISOString());assert(isValidState(state));
 });
-test('migration links old requests and validation rejects corrupt persisted lesson fields',()=>{
- const s=migrateLessonState(createInitialState()); assert.equal(s.requests.find(r=>r.id==='r1')!.lessonId,'giai-tich-l10'); assert(isValidState(s));
- const invalid=structuredClone(s); invalid.lessons[0].materialIds=42 as unknown as string[]; assert(!isValidState(invalid));
+test('Admin only reads; unrelated, suspended and reassigned Managers cannot override',()=>{
+ const state=approved();
+ for(const actor of ['a1','s1','t2'])assert.throws(()=>executeLesson(state,actor,{type:'overrideAttendance',lessonId,studentId:'s1',recorded:true,reason:'Có mặt'},start));
+ assert.throws(()=>executeLesson(state,'t1',{type:'overrideAttendance',lessonId,studentId:'s1',recorded:true,reason:' '},start));
+ const expired=structuredClone(state);expired.classes[0].expiresAt='2026-11-17';assert.throws(()=>override(expired,true,start));
+ const moved=execute(state,'a1',{type:'saveClass',course:{...state.classes[0],managerId:'t2'},reason:'Đổi phụ trách'},now);assert.throws(()=>override(moved,true,start));
+ const suspended=execute(state,'a1',{type:'setAccountStatus',userId:'t1',suspended:true,reason:'Tạm khóa'},now);assert.throws(()=>override(suspended,true,start));
+ assert.equal(getAttendanceHistory(state,'t2',lessonId,'s1').length,0);
 });
-test('authorization, expiry, material ownership and completed slots reject without mutation',()=>{
- const s=createInitialState(); const input={type:'saveLesson' as const,lessonId,classId:'giai-tich',title:'Học',description:'',startsAt,endsAt,materialIds:[],attendanceCode:'CODE'};const before=structuredClone(s);
- assert.throws(()=>executeLesson(s,'s1',input,now)); assert.throws(()=>executeLesson(s,'t2',input,now));
- assert.throws(()=>executeLesson(s,'t1',{...input,lessonId:'giai-tich-l1'},now));
- assert.throws(()=>executeLesson(s,'t1',{...input,materialIds:['material-dai-so']},now)); assert.deepEqual(s,before);
- s.users.find(u=>u.id==='t1')!.status='suspended';assert.throws(()=>executeLesson(s,'t1',input,now));
+test('absence auto-approves, notifies Manager, gives no credit and stays recorded after authorized override',()=>{
+ let state=executeLesson(approved(),'s2',{type:'requestAbsence',lessonId,reason:'Xin nghỉ có lý do'},now);
+ const request=state.requests.at(-1)!;assert.equal(request.kind,'absence');assert.equal(request.status,'approved');
+ assert(state.notifications.some(notification=>notification.recipientId==='t1'&&notification.description.includes('Xin nghỉ có lý do')));
+ assert(!getAttendanceStatus(state,lessonId,'s2',start).recorded);assert(getAttendanceStatus(state,lessonId,'s2',start).absence);
+ state=override(state,true,start,'s2');assert(getAttendanceStatus(state,lessonId,'s2',start).recorded);assert(getAttendanceStatus(state,lessonId,'s2',start).absence);
+ assert.equal(state.requests.find(item=>item.id===request.id)!.status,'approved');
+ assert.throws(()=>executeLesson(approved(),'s2',{type:'requestAbsence',lessonId,reason:'Muộn'},end));
+});
+test('old-cycle records cannot be overwritten by new-cycle check-in or override',()=>{
+ let state=executeLesson(approved(),'s1',{type:'enterAttendance',lessonId,code:'O365'},start);
+ const oldCycle=currentCycleId(state,'giai-tich','s1')!;const old=structuredClone(state.attendance.find(row=>row.lessonId===lessonId&&row.studentId==='s1')!);
+ state=execute(state,'t1',{type:'removeStudent',classId:'giai-tich',studentId:'s1',reason:'Học lại'},start);
+ state=execute(state,'s1',{type:'requestEnrollment',classId:'giai-tich',reason:'Lần mới'},start);
+ state=execute(state,'t1',{type:'decideEnrollment',requestId:state.requests.at(-1)!.id,decision:'approved',reason:''},start);
+ state=override(state,true,start+1000);state=override(state,false,start+2000);
+ assert.deepEqual(state.attendance.find(row=>row.lessonId===lessonId&&row.studentId==='s1'&&row.cycleId===oldCycle),old);
+ assert(!getAttendanceStatus(state,lessonId,'s1',start+2000).recorded);
+ assert.equal(getAttendanceHistory(state,'s1',lessonId,'s1').length,2);
+});
+test('migration converts confirmation, cancels deferred requests and validates override history',()=>{
+ const legacy=approved();delete legacy.lessonWorkflowVersion;legacy.schedules.find(schedule=>schedule.lessonId===lessonId)!.status='confirmed';
+ legacy.requests.push({id:'legacy-correction',kind:'attendance-correction',classId:'giai-tich',lessonId,studentId:'s1',senderId:'t1',title:'Cũ',description:'Cũ',createdAt:startsAt,status:'waiting'});
+ legacy.notifications.push({id:'unconfirmed-legacy',recipientId:'a1',classId:'giai-tich',title:'Chưa xác nhận',description:'24 giờ',createdAt:startsAt,href:'/admin/schedule-approvals'});
+ const migrated=migrateScheduleAttendance(legacy);
+ assert.equal(migrated.schedules.find(schedule=>schedule.lessonId===lessonId)!.status,'approved');assert.equal(migrated.requests.at(-1)!.status,'cancelled');assert(!migrated.notifications.some(item=>item.id==='unconfirmed-legacy'));
+ assert.equal(migrateScheduleAttendance(migrated),migrated);
+ assert.equal(synchronizeMockState(migrated,start-1000).notifications.some(item=>item.id.startsWith('unconfirmed-')),false);
+ const state=override(migrated,true);assert(isValidState(state));
+ const invalid=structuredClone(state) as unknown as Record<string,unknown>;invalid.attendanceOverrides=[{id:'bad'}];assert(!isValidState(invalid));
+});
+test('deferred commands are rejected even through direct service calls',()=>{
+ const state=approved();
+ for(const command of [{type:'confirmLesson',lessonId},{type:'removeAttendance',lessonId,studentId:'s1',reason:'Xóa'},{type:'manualAttendance',lessonId,studentId:'s1',reason:'Cũ'},{type:'requestAttendanceCorrection',lessonId,studentId:'s1',reason:'Cũ'},{type:'requestMakeup',lessonId,startsAt,endsAt,reason:'Cũ'},{type:'resolveUnconfirmed',lessonId,startsAt,endsAt,reason:'Cũ'}] as const)assert.throws(()=>executeLesson(state,'a1',command,now),/MVP/);
 });
 
-test('Admin resolves late confirmation with same-slot makeup and explicit missed deadline notice',()=>{
- const s=approved(), late=Date.parse(startsAt)-10*3600000;
- assert.throws(()=>executeLesson(s,'t1',{type:'resolveUnconfirmed',lessonId,startsAt:'2026-11-21T02:00:00Z',endsAt:'2026-11-21T04:00:00Z',reason:'Sắp xếp lại'},late));
- const next=executeLesson(s,'a1',{type:'resolveUnconfirmed',lessonId,startsAt:'2026-11-21T02:00:00Z',endsAt:'2026-11-21T04:00:00Z',reason:'Sắp xếp lại'},late);
- assert.equal(next.lessons.length,s.lessons.length);assert.equal(next.schedules.find(v=>v.lessonId===lessonId)!.status,'approved');assert(next.notifications.some(n=>n.description.includes('12 giờ')));
-});
-
-test('completed scheduled slots cannot be edited or rescheduled and failed windows do not consume attempts',()=>{
- const s=confirmed(); const ended=Date.parse(endsAt);
- assert.throws(()=>executeLesson(s,'t1',{type:'saveLesson',lessonId,classId:'giai-tich',title:'Đổi',description:'',startsAt:'2026-11-21T02:00:00Z',endsAt:'2026-11-21T04:00:00Z',materialIds:[],attendanceCode:'new'},ended));
- assert.throws(()=>executeLesson(s,'t1',{type:'requestMakeup',lessonId,startsAt:'2026-11-21T02:00:00Z',endsAt:'2026-11-21T04:00:00Z',reason:'Đổi'},ended));
- assert.throws(()=>executeLesson(s,'s1',{type:'enterAttendance',lessonId,code:'wrong'},ended));assert.equal(getAttendanceStatus(s,lessonId,'s1',ended).failures,0);
-});
-test('makeup cannot replace schedule before leave approved, rejection retains original, and can resubmit',()=>{
- let s=executeLesson(confirmed(),'t1',{type:'requestMakeup',lessonId,startsAt:'2026-11-21T02:00:00Z',endsAt:'2026-11-21T04:00:00Z',reason:'Công tác'},now);
- const leave=s.requests.find(r=>r.kind==='teacher-leave'&&r.lessonId===lessonId)!; const proposed=s.requests.at(-1)!;
- assert.throws(()=>executeLesson(s,'a1',{type:'decideSchedule',requestId:proposed.id,approved:true,reason:''},now));
- s=executeLesson(s,'a1',{type:'decideSchedule',requestId:leave.id,approved:false,reason:'Lịch nghỉ không phù hợp'},now);
- assert.equal(s.schedules.find(v=>v.lessonId===lessonId)!.status,'confirmed');
- assert(!s.requests.some(r=>r.lessonId===lessonId&&r.status==='waiting'));
- s=executeLesson(s,'t1',{type:'requestMakeup',lessonId,startsAt:'2026-11-22T02:00:00Z',endsAt:'2026-11-22T04:00:00Z',reason:'Đề xuất khác'},now);assert(s.requests.at(-1)!.status==='waiting');
-});
-test('migration safely leaves malformed legacy values for validation and rejects invalid proposals',()=>{
- const bad={...createInitialState(),lessons:[1]} as unknown as ReturnType<typeof createInitialState>;
- assert.doesNotThrow(()=>migrateLessonState(bad));assert(!isValidState(migrateLessonState(bad)));
- const invalid=createInitialState();invalid.requests[0].proposedStartsAt='bad';assert(!isValidState(invalid));
-});
-test('a pending time edit cannot overwrite a lesson once the current session is active or completed',()=>{
- let s=executeLesson(confirmed(),'t1',{type:'saveLesson',lessonId,classId:'giai-tich',title:'Lịch mới',description:'',startsAt:'2026-11-21T02:00:00Z',endsAt:'2026-11-21T04:00:00Z',materialIds:[],attendanceCode:'CODE'},now);
- s=executeLesson(s,'t1',{type:'submitSchedule',lessonId},now);const requestId=s.requests.at(-1)!.id;
- const snapshot=structuredClone(s);
- for(const clock of [Date.parse(startsAt),Date.parse(endsAt)])assert.throws(()=>executeLesson(s,'a1',{type:'decideSchedule',requestId,approved:true,reason:''},clock));
- assert.deepEqual(s,snapshot);
- const declined=executeLesson(s,'a1',{type:'decideSchedule',requestId,approved:false,reason:'Buổi học đã diễn ra'},Date.parse(endsAt));assert.equal(declined.requests.find(r=>r.id===requestId)!.status,'declined');
+test('schema 3 migration keeps session, cycles and credits while removing obsolete confirmation notices',()=>{
+ const initial=approved();initial.mockGeneration='lesson-migration-dataset';
+ const signed=loginMock(initial,initial.users.find(user=>user.id==='a1')!.email!,'O365-DEMO-a1-v1',now,'lesson-migration-session');
+ const legacy=structuredClone(signed.state);delete legacy.lessonWorkflowVersion;delete legacy.attendanceOverrides;
+ legacy.notifications.push({id:'legacy-approval',recipientId:'s1',classId:'giai-tich',title:'Lịch học đã được duyệt, chờ xác nhận',description:'Lịch cũ',createdAt:startsAt,href:'/student/classes/giai-tich?tab=lessons'});
+ const migrated=decodeDemoStore(JSON.stringify({version:3,state:legacy,demoEpoch:now,realEpoch:now}));
+ assert.equal(migrated.version,4);assert.match(migrated.migrationNotice!,/schema 4/);
+ assert.equal(requireMockSession(migrated.state,signed.session).id,'a1');
+ assert.deepEqual(migrated.state.attendance,legacy.attendance);assert.deepEqual(migrated.state.enrollmentCycles,legacy.enrollmentCycles);
+ assert.equal(migrated.state.notifications.find(n=>n.id==='legacy-approval')!.title,'Lịch học đã được duyệt');
 });
