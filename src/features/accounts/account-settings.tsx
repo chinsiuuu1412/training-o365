@@ -1,0 +1,7 @@
+"use client";
+import {useRouter} from 'next/navigation';
+import {useAuth} from '@/state/auth-provider';
+import {PageHeader} from '@/components/shared/page-header';
+import {ActionForm,Field} from '@/components/shared/management-ui';
+import {Card} from '@/components/ui/card';
+export function AccountSettings(){const {changePassword,fixtureMode}=useAuth(),router=useRouter();return <div className="max-w-2xl space-y-6"><PageHeader title="Cài đặt tài khoản" description="Đổi mật khẩu sẽ thu hồi các phiên đăng nhập hiện tại."/><Card className="p-5 sm:p-6">{fixtureMode&&<p className="mb-4 text-sm text-teal-800">Chế độ mô phỏng · Không nhập mật khẩu thật. Mật khẩu fixture thay đổi chỉ trong bộ nhớ của lần mở trang này.</p>}<ActionForm submitLabel="Đổi mật khẩu và đăng nhập lại" onSubmit={async data=>{const next=String(data.get('new')??'');if(next!==data.get('confirm'))throw new Error('Xác nhận mật khẩu chưa khớp.');await changePassword(String(data.get('current')??''),next);router.replace('/login/?reason=changed');}}><Field label="Mật khẩu hiện tại *"><input className="form-control" type="password" name="current" autoComplete="current-password" required/></Field><Field label="Mật khẩu mới *" hint="12–72 byte UTF-8; không tự cắt khoảng trắng."><input className="form-control" type="password" name="new" autoComplete="new-password" required/></Field><Field label="Xác nhận mật khẩu mới *"><input className="form-control" type="password" name="confirm" autoComplete="new-password" required/></Field></ActionForm></Card></div>;}
