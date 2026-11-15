@@ -1,20 +1,74 @@
 "use client";
-import { useState } from "react";
-import { useLms } from "@/state/lms-provider";
-import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
-import { ActionForm, DataTable, Feedback, Field } from "@/components/shared/management-ui";
-import { StatusBadge } from "@/components/shared/status-badge";
-import { EmptyState } from "@/components/shared/states";
-import { formatDate } from "@/features/dashboard/dashboard-parts";
-
-export function EnrollmentQueue({ classId }: { classId: string }) {
-  const { state, account, run } = useLms();
-  const [history, setHistory] = useState(false); const [decision, setDecision] = useState<{ id: string; value: "approved" | "declined" } | null>(null); const [message, setMessage] = useState("");
-  const requests = state.requests.filter(r => r.classId === classId && r.kind === "enrollment" && (history ? r.status !== "waiting" : r.status === "waiting")).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  const selected = state.requests.find(r => r.id === decision?.id);
-  return <div className="space-y-4"><h2 className="text-xl font-semibold">Yêu cầu đăng ký lớp</h2><Feedback message={message} /><div className="flex gap-2"><Button variant={!history ? "default" : "outline"} aria-pressed={!history} onClick={() => setHistory(false)}>Đang chờ</Button><Button variant={history ? "default" : "outline"} aria-pressed={history} onClick={() => setHistory(true)}>Đã xử lý</Button></div>
-    {requests.length ? <DataTable caption="Yêu cầu enrollment" columns={["Học viên", "Lý do tham gia", "Thời gian", "Trạng thái", "Thao tác"]}>{requests.map(request => <tr key={request.id}><th scope="row" className="px-4 py-4 font-medium">{state.users.find(u => u.id === request.senderId)?.name}</th><td className="max-w-72 px-4 py-4"><p className="whitespace-pre-wrap">{request.description}</p>{request.resolutionReason && <p className="mt-2 text-xs text-red-800">Phản hồi: {request.resolutionReason}</p>}</td><td className="px-4 py-4 text-xs">{formatDate(request.createdAt)}</td><td className="px-4 py-4"><StatusBadge status={request.status === "waiting" ? "waiting" : request.status} /></td><td className="px-4 py-4">{request.status === "waiting" ? <div className="flex gap-2"><Button size="sm" onClick={() => setDecision({ id: request.id, value: "approved" })}>Approve</Button><Button variant="outline" size="sm" onClick={() => setDecision({ id: request.id, value: "declined" })}>Decline</Button></div> : "—"}</td></tr>)}</DataTable> : <EmptyState title={history ? "Chưa có lịch sử xử lý" : "Không có yêu cầu chờ duyệt"} description="Yêu cầu đăng ký của học viên được cập nhật từ state chung." />}
-    <Dialog title={decision?.value === "approved" ? "Phê duyệt đăng ký?" : "Từ chối đăng ký?"} description={`${state.users.find(u => u.id === selected?.senderId)?.name ?? "Học viên"} · ${selected?.description ?? ""}`} open={!!decision} onOpenChange={open => { if (!open) setDecision(null); }}><ActionForm onCancel={() => setDecision(null)} submitLabel={decision?.value === "approved" ? "Xác nhận Approve" : "Xác nhận Decline"} onSubmit={async data => { if (!decision) return; await run(account("teacher").id, { type: "decideEnrollment", requestId: decision.id, decision: decision.value, reason: String(data.get("reason") ?? "") }); setMessage(decision.value === "approved" ? "Đã duyệt. Học viên có quyền truy cập lớp; Attendance và Quiz bắt đầu từ 0." : "Đã từ chối và gửi lý do cho học viên."); setDecision(null); }}>{decision?.value === "declined" ? <Field label="Lý do từ chối *"><textarea name="reason" required maxLength={1000} className="form-control min-h-24" /></Field> : <p className="text-sm leading-6">Hệ thống kiểm tra lại sĩ số, ngày hết hạn và trạng thái đăng ký trước khi duyệt.</p>}</ActionForm></Dialog>
-  </div>;
+import { useState } from 'react';
+import type { EnrollmentRequest } from '@/lib/api/enrollments';
+import { useApiData, useApiResource, formatApiDate } from '@/state/api-data-provider';
+import { ActionForm, DataTable, Field, Feedback, Pagination, ResourceFeedback } from '@/components/shared/management-ui';
+import { EmptyState } from '@/components/shared/states';
+import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
+export function EnrollmentQueue({ classId, role = 'manager', readonly = false }: {
+    classId: number;
+    role?: 'admin' | 'manager';
+    readonly?: boolean;
+}) {
+    const { services, write } = useApiData();
+    const [page, setPage] = useState(1), [decision, setDecision] = useState<{
+        request: EnrollmentRequest;
+        approve: boolean;
+    } | null>(null), [message, setMessage] = useState('');
+    const resource = useApiResource('requests:' + role + ':' + classId + ':' + page, s => s.enrollments.requests(role, classId, page));
+    return <section className="space-y-4">
+    <h2 className="text-xl font-semibold">Yêu cầu ghi danh</h2>
+    <Feedback message={message}/>
+    <ResourceFeedback resource={resource}/>
+        {resource.data && <>
+            {resource.data.items.length ? <DataTable caption="Yêu cầu ghi danh" columns={['Học viên', 'Lý do', 'Trạng thái / thời gian', 'Thao tác']}>
+                {resource.data.items.map(row => <tr key={row.id}>
+                <th scope="row" className="p-4 font-medium">
+                {row.full_name}<p className="text-xs font-normal">MSSV: {row.student_number} · User ID: {row.student_id}
+                </p>
+                <p className="text-xs font-normal">Request ID: {row.id}
+                </p>
+                </th>
+                <td className="max-w-sm whitespace-pre-wrap p-4">
+                {row.reason}{row.decision_reason && <p className="mt-2 text-red-800">Phản hồi: {row.decision_reason}
+                    </p>}
+                </td>
+                <td className="p-4">
+                {({
+                    pending: 'Đang chờ', approved: 'Đã duyệt', declined: 'Từ chối', cancelled: 'Đã hủy'
+                })[row.status]}<p className="mt-1 text-xs">
+                {formatApiDate(row.created_at)}
+                </p>
+                </td>
+                <td className="p-4">
+                    {role === 'manager' && !readonly && row.status === 'pending' && <div className="flex gap-2">
+                    <Button onClick={() => setDecision({
+                        request: row, approve: true
+                    })}>Phê duyệt</Button>
+                    <Button variant="outline" onClick={() => setDecision({
+                        request: row, approve: false
+                    })}>Từ chối</Button>
+                    </div>}
+                </td>
+                </tr>)}
+            </DataTable> : <EmptyState title="Chưa có yêu cầu" description="Danh sách lấy theo lớp và quyền hiện tại."/>}<Pagination {...resource.data} onPage={setPage}/>
+        </>}
+ <Dialog open={!!decision} onOpenChange={open => {
+            if (!open)
+                setDecision(null);
+        }} title={decision?.approve ? 'Phê duyệt ghi danh?' : 'Từ chối ghi danh?'} description="Quyền Manager hiện tại, sức chứa và trạng thái Student được kiểm tra lại khi xử lý.">
+    <ActionForm key={decision?.request.id + '-' + decision?.approve} onCancel={() => setDecision(null)} submitLabel="Xác nhận quyết định" onSubmit={async (form) => {
+            if (!decision)
+                return;
+            await write(async () => (await services).enrollments.review(classId, decision.request.id, decision.approve ? 'approve' : 'decline', String(form.get('reason') ?? '')));
+            setDecision(null);
+            setMessage('Đã xử lý yêu cầu và đọc lại dữ liệu liên quan.');
+        }}>
+        {decision?.approve ? <p className="text-sm">Tạo enrollment_id mới; không mang kết quả của lần ghi danh cũ.</p> : <Field label="Lý do từ chối *">
+        <textarea name="reason" className="form-control" required maxLength={2000}/>
+        </Field>}
+    </ActionForm>
+    </Dialog>
+    </section>;
 }
