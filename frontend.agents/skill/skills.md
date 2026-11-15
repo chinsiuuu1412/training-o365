@@ -1,210 +1,29 @@
-
 ---
 name: lms-frontend
-description: >
-  Design and develop the UI/UX and frontend of a
-  role-based Learning Management System. Use this
-  skill for workflow analysis, screen planning,
-  design systems, React components, frontend
-  implementation, and UI/UX quality reviews.
+description: Use when implementing or reviewing the CLB o365 HUST Next.js frontend against the approved-v2 API contract, including fixture-based development and later browser integration.
 ---
 
-# LMS Frontend Skill
+# LMS Frontend · CLB o365 HUST
 
-## 1. Mission
+## Nguồn và phạm vi
 
-Build a user-friendly, modern Learning Management
-System using the provided product workflows.
+- [Workflow v2](references/user-workflow-guideline.md) quy định luồng nghiệp vụ và phạm vi MVP/SAU MVP. [User information](references/user-information-guideline.md) bổ sung ý nghĩa các trường hồ sơ.
+- Dùng bộ tài liệu backend approved-v2 do nhóm cung cấp, ưu tiên API_DEFINITIONS và API_REQUEST_RESPONSE_EX cho request, response và lỗi. FRONTEND_SURFACE_CONTRACT, FRONTEND_VIDEO_INTEGRATION, ARCHITECTURE, DECISIONS, FEATURES và DEPLOYMENT bổ sung cách tích hợp và giới hạn. Áp dụng các quyết định mới đã chốt về hồ sơ Student và grant Assignment trong đặc tả màn hình.
+- [Audit frontend](../../docs/lms-frontend-audit.md) dùng để tìm route, component và baseline demo. Hướng dẫn Vite trong handoff mô tả frontend khác. Repo này dùng Next.js App Router và lệnh trong package.json.
 
-Primary goals:
-- Consistent Navy / Blue / White design.
-- Clear navigation across Admin, Teacher, Student.
-- Responsive and accessible UI.
-- Smooth, purposeful animations.
-- Reusable and maintainable frontend components.
-- Frontend ready for later backend integration.
+Hoàn thành frontend theo contract trước khi backend sẵn sàng. Dùng fixture tổng hợp đúng hình dạng API trong dev/test. Bản deploy dùng API thật và chỉ mở các luồng đã được kiểm chứng với backend. Giữ hostname triển khai dưới dạng cấu hình. Nghiệm thu cookie, CSRF, quyền và lưu dữ liệu thật ở đợt sau.
 
-## 2. Source of Truth
+## Cách triển khai
 
-Read the relevant reference before starting work:
+1. Đối chiếu mỗi màn hình và thao tác với role, scope, endpoint, DTO, lỗi và ca kiểm thử. Đọc code và script repo trước khi chọn file thay đổi.
+2. Giữ nhận diện tiếng Việt, AppShell, shared components và route vai trò. Ánh xạ role API class_manager thành manager tại lớp dữ liệu. Giữ lịch sử theo enrollment_id.
+3. Dùng cùng đường đi UI và adapter cho fixture dev/test và API thật. Backend quyết định phiên, thời gian, quyền, điểm và kết quả ghi. Hiển thị lỗi hoặc trạng thái chưa khả dụng khi API chưa nối hoặc lỗi.
+4. Chuẩn bị static export cho GitHub Pages. Các trang chi tiết phải mở được ID tạo sau build. Gọi /api/v1 theo đường dẫn tương đối. Reverse proxy và SITE_ORIGIN được xác nhận khi có hostname.
+5. Chạy test hành vi đã đổi, lint, typecheck, static build và browser smoke với fixture. Báo rõ ca đã chạy và danh sách ca cần backend thật.
 
-- references/user-workflow-guideline.md
-- references/design-system.md
-- references/screen-specification.md
-- references/frontend-architecture.md
-- references/ux-quality-checklist.md
+## References
 
-Business rules in user-workflow-guideline.md
-have priority over design suggestions.
-
-Never silently modify confirmed business rules.
-
-If references conflict:
-1. Identify the conflicting statements.
-2. Explain the design or implementation impact.
-3. Request a decision when necessary.
-4. Use an explicitly labeled temporary assumption
-   only when safe and non-destructive.
-
-## 3. Product Context
-
-The LMS supports three roles:
-
-### Admin
-- System dashboard
-- Students and teachers management
-- Classes management
-- Schedule approval
-- Library supervision
-- Notifications and requests
-
-### Teacher
-- Teaching overview
-- Assigned classes
-- Lessons and attendance
-- Quizzes and results
-- Enrollment management
-- Course materials
-- Notifications and requests
-
-### Student
-- Learning overview
-- Class discovery and enrollment
-- Registered classes
-- Lessons and attendance
-- Quizzes and progress
-- Library and schedules
-- Notifications and requests
-
-Demo classes:
-- Giải tích
-- Đại số
-- Nhập môn Công nghệ thông tin
-
-## 4. Implementation Stack
-
-- Next.js App Router
-- React and TypeScript
-- Tailwind CSS
-- shadcn/ui
-- Lucide React
-- Recharts when charts are necessary
-- Motion for React when animations add value
-
-Follow the existing project's installed
-versions and conventions.
-
-## 5. Mandatory Design Workflow
-
-For every screen or feature:
-
-1. Identify the relevant workflow.
-2. Identify the user role.
-3. Define the user goal.
-4. Determine required data.
-5. Define UI states.
-6. Identify reusable components.
-7. Design the page structure.
-8. Implement the UI.
-9. Add mock interactions when requested.
-10. Validate against workflow and references.
-
-Do not skip workflow analysis for
-multi-step or approval-based interactions.
-
-## 6. UI Principles
-
-- Simple before decorative.
-- Consistency before novelty.
-- Clear hierarchy and navigation.
-- One obvious primary action per context.
-- Explicit feedback for user actions.
-- Accessible contrast and keyboard navigation.
-- Responsive from desktop to mobile.
-- Respect reduced-motion preferences.
-
-## 7. Frontend Rules
-
-- Use shared components.
-- Separate mock data from UI components.
-- Define business entities with TypeScript.
-- Avoid duplicating sidebar/navigation logic.
-- Keep roles and permissions explicit.
-- Do not use visual hiding as real authorization.
-- Keep API-facing logic replaceable.
-- Do not hardcode secrets or real credentials.
-- Preserve existing working features.
-- Avoid installing unnecessary dependencies.
-
-## 8. Mock Data Policy
-
-Mock data must be consistent across all roles.
-
-For example:
-- Student enrollment status must match
-  Teacher's enrollment request list.
-- A lesson belongs to a valid class.
-- A quiz belongs to a valid class or lesson.
-- Dashboard progress is derived from
-  attendance and quiz records.
-
-Do not invent success states for actions
-that have not been implemented.
-
-For purely visual prototypes, label
-non-functional controls clearly.
-
-## 9. Animation Rules
-
-Use subtle transitions for:
-- Sidebar expansion/collapse
-- Tab navigation
-- Cards and menus
-- Dialogs
-- Toast notifications
-- Progress changes
-
-Avoid:
-- Large continuous animations
-- Excessive bouncing
-- Distracting background effects
-- Motion that delays important actions
-
-## 10. Definition of Done
-
-A completed UI task must satisfy:
-
-- Required screen structure exists.
-- Navigation works as specified.
-- Design tokens are consistent.
-- Mock data is realistic and consistent.
-- Loading, empty, and error states are covered.
-- Desktop and mobile layouts are usable.
-- Keyboard interactions are considered.
-- No obvious dead links.
-- No known critical runtime errors.
-- Deviations from the workflow are reported.
-
-Run available lint, typecheck, and build
-checks when working in the codebase.
-
-Report which checks actually ran.
-
-## 11. Execution Protocol
-
-Before implementation:
-- Summarize the relevant requirements.
-- List affected screens/components.
-- Identify missing information.
-- Propose a small implementation plan.
-
-During implementation:
-- Build in small increments.
-- Reuse existing components.
-- Avoid unrelated code changes.
-
-After implementation:
-- Summarize changed files.
-- List completed interactions.
-- Report validation results.
-- List remaining gaps.
+- [Design system](references/design-system.md) cho nhận diện và component.
+- [Đặc tả màn hình](references/screen-specification.md) cho quyền, route, trạng thái và API theo luồng.
+- [Kiến trúc frontend](references/frontend-architecture.md) cho fixture, DTO, state và static export.
+- [Checklist QA](references/ux-quality-checklist.md) cho kiểm thử frontend và bàn giao nghiệm thu.
