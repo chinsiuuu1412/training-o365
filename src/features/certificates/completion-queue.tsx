@@ -21,12 +21,12 @@ export function CompletionQueue({ role, classId }: { role: Role; classId: string
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const course = state.classes.find(item => item.id === classId);
-  const allowed = role === "admin" || (role === "teacher" && course?.teacherId === actor.id);
+  const allowed = role === "admin" || (role === "manager" && course?.managerId === actor.id);
   const requests = allowed ? (state.completionRequests ?? []).filter(item => item.classId === classId && (filter === "all" || item.status === filter)).toReversed() : [];
   const selected = state.completionRequests?.find(item => item.id === decision?.id && item.classId === classId);
 
   return <section className="space-y-4">
-    <div className="flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-xl font-semibold">Hàng đợi duyệt hoàn thành & thu hồi</h2><p className="mt-2 text-sm text-muted-foreground">Teacher đề xuất → Admin duyệt. Admin đề xuất → Teacher duyệt.</p></div>
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><h2 className="text-xl font-semibold">Hàng đợi duyệt hoàn thành & thu hồi</h2><p className="mt-2 text-sm text-muted-foreground">Manager đề xuất → Admin duyệt. Admin đề xuất → Manager duyệt.</p></div>
       <Field label="Trạng thái đề xuất"><select className="form-control" value={filter} onChange={event => setFilter(event.target.value)}><option value="waiting">Đang chờ</option><option value="approved">Đã duyệt</option><option value="declined">Từ chối</option><option value="cancelled">Đã đóng / hủy</option><option value="all">Tất cả</option></select></Field>
     </div>
     <Feedback message={error} error />
@@ -72,12 +72,12 @@ export function CompletionAppeals({ role, classId }: { role: Role; classId: stri
   const actor = account(role);
   const [review, setReview] = useState<{ id: string; forward: boolean } | null>(null);
   const [reason, setReason] = useState("");
-  const appeals = (state.completionAppeals ?? []).filter(item => item.classId === classId && (role === "student" ? item.studentId === actor.id : role === "teacher" && state.classes.some(course => course.id === classId && course.teacherId === actor.id))).toReversed();
+  const appeals = (state.completionAppeals ?? []).filter(item => item.classId === classId && (role === "student" ? item.studentId === actor.id : role === "manager" && state.classes.some(course => course.id === classId && course.managerId === actor.id))).toReversed();
   const selected = appeals.find(item => item.id === review?.id);
   if (role === "admin") return null;
   return <section className="space-y-4"><h2 className="text-xl font-semibold">Khiếu nại hoàn thành</h2>
     {appeals.length ? appeals.map(appeal => <Card key={appeal.id} className="space-y-3 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><h3 className="font-semibold">{appeal.snapshot.studentName}</h3><StatusBadge status={appeal.status === "forwarded" ? "waiting" : appeal.status} label={appeal.status === "forwarded" ? "Đã chuyển duyệt chéo" : undefined} /></div><p className="whitespace-pre-wrap break-words text-sm leading-6">{appeal.reason}</p><p className="text-xs text-muted-foreground">{formatDate(appeal.createdAt)}</p>{appeal.resolutionReason && <p className="whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm leading-6">{appeal.resolutionReason}</p>}
-      {role === "teacher" && appeal.status === "waiting" && <div className="flex flex-wrap gap-3"><Button onClick={() => { setReason(""); setReview({ id: appeal.id, forward: true }); }}>Tiếp nhận và chuyển Admin</Button><Button variant="outline" onClick={() => { setReason(""); setReview({ id: appeal.id, forward: false }); }}>Từ chối khiếu nại</Button></div>}
+      {role === "manager" && appeal.status === "waiting" && <div className="flex flex-wrap gap-3"><Button onClick={() => { setReason(""); setReview({ id: appeal.id, forward: true }); }}>Tiếp nhận và chuyển Admin</Button><Button variant="outline" onClick={() => { setReason(""); setReview({ id: appeal.id, forward: false }); }}>Từ chối khiếu nại</Button></div>}
     </Card>) : <EmptyState title="Chưa có khiếu nại hoàn thành" description="Khiếu nại và phản hồi được lưu theo từng lần ghi danh." />}
     <Dialog open={review !== null} onOpenChange={open => { if (!open) setReview(null); }} title={review?.forward ? "Tiếp nhận khiếu nại và gửi duyệt chéo?" : "Từ chối khiếu nại?"} description={selected?.reason ?? "Khiếu nại không còn khả dụng."}>
       {review && selected && <ActionForm submitLabel="Xác nhận xử lý khiếu nại" onCancel={() => setReview(null)} onSubmit={async () => {

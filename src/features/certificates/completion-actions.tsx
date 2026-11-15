@@ -12,7 +12,7 @@ export function CompletionProposal({ role, classId, studentId, kind, certificate
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   return <><Button variant="outline" size="sm" onClick={() => { setReason(""); setOpen(true); }}>{trigger}</Button>
-    <Dialog open={open} onOpenChange={setOpen} title={kind === "revoke" ? "Đề xuất thu hồi chứng chỉ mock" : "Đề xuất hoàn thành / cấp lại"} description="Teacher đề xuất thì Admin duyệt; Admin đề xuất thì Teacher duyệt.">
+    <Dialog open={open} onOpenChange={setOpen} title={kind === "revoke" ? "Đề xuất thu hồi chứng chỉ mock" : "Đề xuất hoàn thành / cấp lại"} description="Manager đề xuất thì Admin duyệt; Admin đề xuất thì Manager duyệt.">
       <ActionForm submitLabel="Gửi đề xuất duyệt chéo" onCancel={() => setOpen(false)} onSubmit={async () => {
         await run(account(role).id, { type: "requestCompletion", classId, studentId, kind, certificateId, reason });
         setOpen(false);
@@ -30,7 +30,7 @@ export function CompletionAppealButton({ classId }: { classId: string }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   return <><Button variant="outline" onClick={() => { setReason(""); setOpen(true); }}>Gửi khiếu nại hoàn thành</Button>
-    <Dialog open={open} onOpenChange={setOpen} title="Khiếu nại kết quả hoàn thành" description="Giảng viên có thể từ chối kèm phản hồi hoặc tiếp nhận và chuyển đề xuất để Admin duyệt chéo.">
+    <Dialog open={open} onOpenChange={setOpen} title="Khiếu nại kết quả hoàn thành" description="Quản lý lớp có thể từ chối kèm phản hồi hoặc tiếp nhận và chuyển đề xuất để Admin duyệt chéo.">
       <ActionForm submitLabel="Gửi khiếu nại" onCancel={() => setOpen(false)} onSubmit={async () => {
         await run(account("student").id, { type: "appealCompletion", classId, reason });
         setOpen(false);

@@ -32,7 +32,7 @@ export function CertificateHistory({ role, classId, studentId }: { role: Role; c
     if (classId && certificate.classId !== classId) return false;
     if (studentId && certificate.studentId !== studentId) return false;
     if (role === "student") return certificate.studentId === actor.id;
-    return role === "admin" || state.classes.some(course => course.id === certificate.classId && course.teacherId === actor.id);
+    return role === "admin" || state.classes.some(course => course.id === certificate.classId && course.managerId === actor.id);
   }).toReversed();
   return <section className="space-y-4"><h2 className="text-xl font-semibold">Chứng chỉ và lịch sử các lần học</h2>
     {certificates.length ? <div className="space-y-4">{certificates.map(certificate => <div key={certificate.id} className="space-y-3">
