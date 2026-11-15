@@ -1,62 +1,37 @@
-﻿"use client";
-
-import { useState } from "react";
-import type { Quiz, QuizAttempt } from "@/types/lms";
-import { useLms } from "@/state/lms-provider";
-import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
-import { ActionForm, Field } from "@/components/shared/management-ui";
-import { formatDate } from "@/features/dashboard/dashboard-parts";
+"use client";
+import { useState } from 'react';
+import type { QuizResult } from '@/lib/api/quizzes';
+import { useApiResource, formatApiDate } from '@/state/api-data-provider';
+import { Card } from '@/components/ui/card';
+import { StatusBadge } from '@/components/shared/status-badge';
+import { Pagination, ResourceFeedback } from '@/components/shared/management-ui';
 
 export function clockLabel(milliseconds: number) {
-  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
-  return `${String(Math.floor(seconds / 3600)).padStart(2, "0")}:${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+    const total = Math.max(0, Math.ceil(milliseconds / 1000)), seconds = String(total % 60).padStart(2, '0'), minutes = Math.floor(total / 60);
+    return minutes >= 60 ? Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0') + ':' + seconds : String(minutes).padStart(2, '0') + ':' + seconds;
 }
-
-export function AttemptHistory({ attempts, passingScore }: { attempts: QuizAttempt[]; passingScore: number }) {
-  const submitted = attempts.filter(attempt => attempt.status === "submitted");
-  return (
-    <section className="space-y-3" aria-label="Lịch sử làm bài">
-      <h3 className="font-semibold">Lịch sử làm bài</h3>
-      {submitted.length ? <ol className="divide-y divide-border">{submitted.map((attempt, index) => (
-        <li key={attempt.id ?? index} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
-          <span>Lượt {index + 1}{attempt.submittedAt && <span className="block text-xs text-muted-foreground">{formatDate(attempt.submittedAt)}</span>}</span>
-          <span className={attempt.valid && attempt.score >= passingScore ? "font-medium text-emerald-700" : "font-medium text-slate-700"}>
-            {attempt.score}/100 · {!attempt.valid ? "Không hợp lệ" : attempt.score >= passingScore ? "Đạt" : "Chưa đạt"}
-          </span>
-        </li>
-      ))}</ol> : <p className="text-sm text-muted-foreground">Bạn chưa nộp bài lần nào.</p>}
-      <p className="text-xs leading-5 text-muted-foreground">Kết quả chỉ hiển thị điểm số. Đáp án không được công bố.</p>
-    </section>
-  );
+export function QuizResultSummary({ result }: { result: QuizResult }) {
+    const attempt = result.attempt;
+    return <Card className="space-y-3 p-5">
+        <h2 className="text-xl font-semibold">Kết quả lượt {attempt.attempt_number}</h2>
+        <StatusBadge status={attempt.is_passed ? 'passed' : 'failed'} label={attempt.is_passed ? 'Đạt' : 'Chưa đạt'} />
+        <p className="text-3xl font-semibold">{attempt.score_percent}%</p>
+        <p className="text-sm">Điểm {attempt.score}/{attempt.max_score} · Đã nộp {formatApiDate(attempt.submitted_at)}</p>
+        <p className="text-sm">Enrollment ID {attempt.enrollment_id} · Thời gian làm {attempt.time_spent_seconds} giây</p>
+    </Card>;
 }
-
-export function RetakeRequest({ quiz }: { quiz: Quiz }) {
-  const { state, account, run } = useLms();
-  const actor = account("student");
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const requests = state.requests.filter(request => request.kind === "test-retake" && request.quizId === quiz.id && request.senderId === actor.id);
-  const latest = [...requests].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-  if (quiz.kind !== "test") return null;
-  return (
-    <section className="space-y-3 rounded-xl border border-border bg-slate-50 p-4">
-      <h3 className="font-semibold">Yêu cầu làm lại Test</h3>
-      {latest && <div className="space-y-1 text-sm" role="status">
-        <p className="font-medium">{latest.status === "waiting" ? "Đang chờ giảng viên duyệt" : latest.status === "approved" ? "Yêu cầu đã được duyệt" : latest.status === "declined" ? "Yêu cầu bị từ chối" : "Yêu cầu đã hủy"}</p>
-        <p className="whitespace-pre-wrap text-muted-foreground">Lý do gửi: {latest.description}</p>
-        {latest.resolutionReason && <p className="whitespace-pre-wrap">Phản hồi: {latest.resolutionReason}</p>}
-      </div>}
-      <Button variant="outline" disabled={latest?.status === "waiting"} onClick={() => setOpen(true)}>Gửi yêu cầu làm lại</Button>
-      <Dialog open={open} onOpenChange={setOpen} title="Yêu cầu làm lại Test" description="Giảng viên sẽ xem xét lý do và quyết định mở thêm lượt cùng thời hạn mới.">
-        <ActionForm submitLabel="Gửi yêu cầu" onCancel={() => setOpen(false)} onSubmit={async () => {
-          await run(actor.id, { type: "requestRetake", quizId: quiz.id, reason });
-          setOpen(false);
-          setReason("");
-        }}>
-          <Field label="Lý do làm lại *"><textarea required maxLength={1000} className="form-control min-h-28" value={reason} onChange={event => setReason(event.target.value)} /></Field>
-        </ActionForm>
-      </Dialog>
-    </section>
-  );
+export function AttemptHistory({ classId, quizId }: { classId: number; quizId: number }) {
+    const [page, setPage] = useState(1);
+    const resource = useApiResource('my-quiz-history:' + classId + ':' + quizId + ':' + page, s => s.quizzes.history(classId, quizId, page));
+    return <section className="space-y-4">
+        <h2 className="text-xl font-semibold">Lịch sử lượt làm</h2><ResourceFeedback resource={resource} />
+        {resource.data && <>
+            {resource.data.items.map(({ attempt }) => <article key={attempt.id} className="space-y-2 rounded-xl border bg-white p-4 text-sm">
+                <h3 className="font-semibold">Lượt {attempt.attempt_number} · {attempt.status === 'in_progress' ? 'Đang làm' : attempt.is_passed ? 'Đạt' : 'Chưa đạt'}</h3>
+                <p>{attempt.score_percent === null ? 'Chưa có điểm' : 'Điểm ' + attempt.score_percent + '%'}</p>
+                <p>Bắt đầu {formatApiDate(attempt.started_at)}{attempt.submitted_at && ' · Nộp ' + formatApiDate(attempt.submitted_at)}</p>
+            </article>)}
+            {!resource.data.items.length && <p className="text-sm">Chưa có lượt làm.</p>}<Pagination {...resource.data} onPage={setPage} />
+        </>}
+    </section>;
 }

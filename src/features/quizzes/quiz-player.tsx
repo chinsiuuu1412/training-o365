@@ -1,153 +1,157 @@
-﻿"use client";
-
-import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { useLms } from "@/state/lms-provider";
-import { getAttemptRemaining, getQuizAvailability } from "@/mocks/services/quizzes";
-import type { Command } from "@/mocks/services/management";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Dialog } from "@/components/ui/dialog";
-import { ActionForm, Feedback } from "@/components/shared/management-ui";
-import { EmptyState } from "@/components/shared/states";
-import { formatDate } from "@/features/dashboard/dashboard-parts";
-import { AttemptHistory, clockLabel, RetakeRequest } from "./student-quiz-parts";
+"use client";
+import Link from 'next/link';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { ApiError } from '@/lib/api/client';
+import { isRunner, canSubmitManually, quizAvailability, type AttemptPayload, type QuizRunner, type QuizzesService } from '@/lib/api/quizzes';
+import { QuizAttemptController } from '@/lib/api/quiz-attempt-controller';
+import { useApiData, useApiResource, formatApiDate } from '@/state/api-data-provider';
+import { detailHref } from '@/config/routes';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Dialog } from '@/components/ui/dialog';
+import { ActionForm, Feedback, ResourceFeedback } from '@/components/shared/management-ui';
+import { EmptyState } from '@/components/shared/states';
+import { AttemptHistory, QuizResultSummary, clockLabel } from './student-quiz-parts';
 
 export function QuizPlayer({ classId, quizId }: { classId: string; quizId: string }) {
-  const { account } = useLms();
-  return <PlayerView key={`${account("student").id}-${quizId}`} classId={classId} quizId={quizId} />;
-}
-
-function PlayerView({ classId, quizId }: { classId: string; quizId: string }) {
-  const { state, now, account, run, pauseAssignmentOnExit } = useLms();
-  const actor = account("student");
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [warning, setWarning] = useState("");
-  const [dialog, setDialog] = useState<"submit" | "exit" | "pause" | "expiry" | null>(null);
-  const syncing = useRef(false);
-  const pauseOnExit = useRef(pauseAssignmentOnExit);
-  const pauseExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    pauseOnExit.current = pauseAssignmentOnExit;
-  }, [pauseAssignmentOnExit]);
-  const quiz = state.quizzes.find(item => item.id === quizId && item.classId === classId);
-  const availability = getQuizAvailability(state, quizId, actor.id, now);
-  const attempt = availability.currentAttempt;
-  const remaining = attempt ? getAttemptRemaining(attempt, now) : 0;
-  const attempts = state.attempts.filter(item => item.quizId === quizId && item.studentId === actor.id);
-  const latest = [...attempts].reverse().find(item => item.status === "submitted");
-  const back = <Button variant="outline" asChild><Link href={`/student/classes/${classId}?tab=quizzes`}>Về Quiz của lớp</Link></Button>;
-
-  useEffect(() => {
-    if (!attempt?.id || remaining > 0 || syncing.current || availability.status === "unavailable") return;
-    syncing.current = true;
-    run(actor.id, { type: "syncQuiz", attemptId: attempt.id })
-      .catch(cause => setError(cause instanceof Error ? cause.message : "Không thể tự nộp bài. Vui lòng thử lại."))
-      .finally(() => { syncing.current = false; });
-  }, [actor.id, attempt?.id, remaining, run, availability.status]);
-
-  useEffect(() => {
-    function offline() {
-      if (quiz?.kind === "assignment" && attempt?.id) pauseOnExit.current(actor.id, attempt.id);
-      setWarning("Kết nối mạng đã gián đoạn. Dữ liệu demo vẫn lưu trên trình duyệt. Bạn có thể dùng nút mô phỏng gián đoạn để kiểm tra quy tắc bài làm.");
-    }
-    function hidden() {
-      if (document.hidden) setWarning("Bạn vừa rời màn hình làm bài. Sự kiện trình duyệt chỉ hiển thị cảnh báo trong demo. Nút mô phỏng thoát Test sẽ yêu cầu xác nhận trước khi chấm 0 điểm.");
-    }
-    window.addEventListener("offline", offline);
-    document.addEventListener("visibilitychange", hidden);
-    return () => {
-      window.removeEventListener("offline", offline);
-      document.removeEventListener("visibilitychange", hidden);
-    };
-  }, [actor.id, attempt?.id, quiz?.kind]);
-
-  useEffect(() => {
-    if (pauseExitTimer.current) clearTimeout(pauseExitTimer.current);
-    if (quiz?.kind !== "assignment" || !attempt?.id) return;
-    const attemptId = attempt.id;
-    function pause() {
-      pauseOnExit.current(actor.id, attemptId);
-    }
-    window.addEventListener("pagehide", pause);
-    window.addEventListener("beforeunload", pause);
-    return () => {
-      window.removeEventListener("pagehide", pause);
-      window.removeEventListener("beforeunload", pause);
-      // Defer route-exit persistence so Strict Mode's effect replay can cancel it.
-      pauseExitTimer.current = setTimeout(pause, 0);
-    };
-  }, [actor.id, attempt?.id, quiz?.kind]);
-
-  async function execute(command: Command) {
-    setError("");
-    setBusy(true);
-    try {
-      await run(actor.id, command);
-      return true;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không thể lưu thay đổi.");
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!quiz || availability.status === "unavailable" || quiz.status === "draft") return <div className="space-y-4">{back}<EmptyState title="Không thể truy cập bài Quiz" description="Kiểm tra quyền học viên, thời hạn lớp và bài Quiz đã được phát hành." /></div>;
-  if (!attempt) return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      {back}
-      <Card className="space-y-5 p-5 sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-wide text-primary">{quiz.kind === "test" ? "Test" : "Assignment"}</p>
-        <h1 className="text-2xl font-semibold">{quiz.title}</h1>
-        {latest ? <div role="status" className="rounded-xl bg-blue-50 p-5"><h2 className="text-lg font-semibold">Đã nộp bài · {latest.score}/100</h2><p className="mt-2 text-sm">{latest.valid && latest.score >= (latest.passingScore ?? quiz.passingScore) ? "Đạt" : "Chưa đạt"}{latest.submissionReason === "exit" ? " · Lượt Test kết thúc do mô phỏng thoát bài." : ""}</p><p className="mt-2 text-sm">Điểm cao nhất hợp lệ: {availability.bestScore === null ? "Chưa có" : `${availability.bestScore}/100`}. Điểm đạt: {quiz.passingScore}/100.</p></div> : <p className="text-sm text-muted-foreground">Chưa có lượt làm bài đang diễn ra. Về danh sách Quiz để xem điều kiện và xác nhận bắt đầu.</p>}
-        <AttemptHistory attempts={attempts} passingScore={quiz.passingScore} />
-        {latest && <RetakeRequest quiz={quiz} />}
-      </Card>
-    </div>
-  );
-
-  const questions = attempt.questions ?? quiz.questions ?? [];
-  const question = questions[Math.min(questionIndex, Math.max(0, questions.length - 1))];
-  const answered = questions.filter(item => !!attempt.answers?.[item.id]).length;
-  const paused = attempt.status === "paused";
-  const attemptId = attempt.id;
-  const canAnswer = !paused && remaining > 0 && !busy && !!attemptId;
-  return (
-    <div className="mx-auto max-w-6xl space-y-5">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div><p className="text-xs font-semibold uppercase tracking-wide text-primary">{quiz.kind === "test" ? "Test" : "Assignment"} · Không gian làm bài</p><h1 className="mt-2 text-2xl font-semibold">{quiz.title}</h1><p className="mt-2 text-sm text-muted-foreground">Hạn nộp: {formatDate(attempt.dueAt ?? availability.effectiveDueAt)} (UTC+7)</p></div>
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-3"><p className="text-xs text-blue-700">{paused ? "Thời gian đã tạm dừng" : "Thời gian còn lại"}</p><p role="timer" aria-label={`Thời gian còn lại ${clockLabel(remaining)}`} className="mt-1 font-mono text-2xl font-semibold text-blue-900">{clockLabel(remaining)}</p></div>
-      </header>
-      <Feedback message={error} error />
-      <p className="rounded-lg bg-slate-50 p-3 text-xs leading-5 text-muted-foreground">Mô phỏng frontend: đồng hồ, hạn nộp và lưu bài dùng dữ liệu trình duyệt. Việc xác minh thời gian và bảo vệ bài thi thực tế cần backend. Chuyển tab không tự động chấm phạt.</p>
-      {warning && <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900"><p>{warning}</p><Button size="sm" variant="ghost" onClick={() => setWarning("")}>Đóng</Button></div>}
-      {paused && <Card className="space-y-3 border-amber-200 bg-amber-50 p-5"><h2 className="font-semibold">Assignment đã tạm dừng</h2><p className="text-sm leading-6">Câu trả lời và thời gian còn lại đã được lưu. Hạn nộp vẫn áp dụng trong lúc tạm dừng.</p><Button disabled={busy || !attemptId || remaining <= 0} onClick={() => attemptId && execute({ type: "resumeQuiz", attemptId })}>Tiếp tục làm Assignment</Button>{back}</Card>}
-      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <Card className="min-w-0 space-y-6 p-5 sm:p-8">
-          {question ? <fieldset disabled={!canAnswer} className="min-w-0 space-y-4"><legend className="mb-6 w-full whitespace-pre-wrap text-lg font-semibold leading-8">Câu {questionIndex + 1}/{questions.length}. {question.prompt}</legend>{question.options.map((option, index) => <label key={option.id} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 text-sm leading-6 transition-colors ${attempt.answers?.[question.id] === option.id ? "border-primary bg-blue-50" : "border-border hover:bg-slate-50"}`}><input type="radio" name={`question-${question.id}`} value={option.id} checked={attempt.answers?.[question.id] === option.id} className="mt-1 size-4 shrink-0 accent-blue-600" onChange={() => attemptId && execute({ type: "answerQuiz", attemptId, questionId: question.id, optionId: option.id })} /><span className="whitespace-pre-wrap"><span className="mr-2 font-semibold">{String.fromCharCode(65 + index)}.</span>{option.text}</span></label>)}</fieldset> : <EmptyState title="Bài chưa có câu hỏi" description="Liên hệ giảng viên để kiểm tra nội dung bài." />}
-          <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" disabled={questionIndex === 0} onClick={() => setQuestionIndex(index => index - 1)}>Câu trước</Button><span role="status" className="text-xs text-muted-foreground">{busy ? "Đang lưu câu trả lời…" : "Câu trả lời được lưu khi chọn"}</span><Button variant="outline" disabled={questionIndex >= questions.length - 1} onClick={() => setQuestionIndex(index => index + 1)}>Câu tiếp</Button></div>
+    const classNumber = Number(classId), quizNumber = Number(quizId);
+    const { services, refresh, now } = useApiData();
+    const [started, setStarted] = useState<AttemptPayload | null>(null), [confirm, setConfirm] = useState(false), [message, setMessage] = useState('');
+    const startIntent = useRef<{ cycle: number; key: string } | null>(null);
+    const resource = useApiResource('quiz-player:' + classId + ':' + quizId, async s => {
+        const [quiz, dashboard, active, history] = await Promise.all([s.quizzes.studentInfo(classNumber, quizNumber), s.dashboard.get('student'), s.quizzes.active(classNumber, quizNumber), s.quizzes.history(classNumber, quizNumber)]);
+        const cycle = dashboard.classes.find(row => row.class.id === classNumber)?.enrollments.find(row => row.enrollment.status === 'enrolled')?.enrollment;
+        return { quiz, cycle, active, latest: history.items[0] ?? null, service: s.quizzes };
+    });
+    const data = resource.data;
+    const payload = [started, data?.active, data?.latest].find(payload => payload && payload.attempt.enrollment_id === data?.cycle?.id) ?? null;
+    const back = <Button asChild variant="outline"><Link href={detailHref('student', classId, undefined, 'quizzes')}>Về Quiz của lớp</Link></Button>;
+    if (!data) return <div className="space-y-5">{back}<ResourceFeedback resource={resource} />{!resource.loading && !resource.error && <EmptyState title="Không có Quiz trong phạm vi" description="Kiểm tra lớp và lần ghi danh hiện hành." />}</div>;
+    if (payload && isRunner(payload)) return <div className="space-y-5"><ResourceFeedback resource={resource} /><RunnerView key={payload.attempt.id} classId={classNumber} service={data.service} initial={payload} onFinished={result => {
+        startIntent.current = null;
+        setStarted(result);
+        setMessage('Kết quả theo đáp án server đã lưu. Thay đổi chưa được xác nhận lưu trước cutoff không được tính.');
+        void refresh();
+    }} /></div>;
+    const available = !!data.cycle && now > 0 && quizAvailability(data.quiz, now) === 'available';
+    return <div className="mx-auto max-w-4xl space-y-5">
+        {back}<ResourceFeedback resource={resource} /><Feedback message={message} />
+        <Card className="space-y-4 p-5 sm:p-7">
+            <p className="text-sm font-semibold text-primary">{data.quiz.quiz_type === 'test' ? 'Test' : 'Assignment'}</p>
+            <h1 className="text-2xl font-semibold">{data.quiz.title}</h1><p className="whitespace-pre-wrap text-sm leading-7">{data.quiz.description}</p>
+            <p className="text-sm">{data.quiz.duration_seconds} giây · Điểm đạt {data.quiz.pass_score}% · Đã dùng {data.quiz.used_attempts}/{data.quiz.allowed_attempts} lượt</p>
+            <p className="text-sm">Mở {formatApiDate(data.quiz.open_at)} · Hạn hiệu lực {formatApiDate(data.quiz.effective_deadline)}</p>
+            <p className="text-sm">Điểm cao nhất {data.quiz.best_score_percent === null ? 'Chưa có' : data.quiz.best_score_percent + '%'} · {data.quiz.is_passed ? 'Đạt' : 'Chưa đạt'}</p>
+            <p className="text-sm leading-7">{data.quiz.quiz_type === 'test' ? 'Test nộp tay từ đúng 2/3 thời lượng.' : 'Assignment cho phép nộp sớm.'} Đồng hồ tiếp tục khi reload hoặc mất mạng. Cutoff có thể sớm hơn thời lượng khi gần hạn.</p>
+            {available ? <Button onClick={() => setConfirm(true)}>{payload ? 'Bắt đầu lượt tiếp theo' : 'Bắt đầu làm bài'}</Button> : <p role="status" className="text-sm">{!now ? 'Đang đồng bộ thời gian' : quizAvailability(data.quiz, now) === 'not-open' ? 'Chưa đến giờ mở bài.' : quizAvailability(data.quiz, now) === 'expired' ? 'Đã hết hạn hiệu lực.' : 'Đã dùng hết lượt. Liên hệ Manager nếu cần cấp thêm.'}</p>}
         </Card>
-        <Card className="space-y-5 p-5">
-          <div><h2 className="font-semibold">Tiến độ bài làm</h2><p className="mt-2 text-sm text-muted-foreground">Đã trả lời {answered}/{questions.length} câu</p><progress className="mt-3 h-2 w-full accent-blue-600" value={answered} max={questions.length || 1} aria-label="Số câu đã trả lời" /></div>
-          <nav aria-label="Chọn câu hỏi" className="grid grid-cols-5 gap-2">{questions.map((item, index) => <Button key={item.id} size="icon" variant={attempt.answers?.[item.id] ? "default" : "outline"} aria-current={index === questionIndex ? "step" : undefined} aria-label={`Câu ${index + 1}, ${attempt.answers?.[item.id] ? "đã trả lời" : "chưa trả lời"}`} className={`w-full ${index === questionIndex ? "ring-2 ring-primary ring-offset-2" : ""}`} onClick={() => setQuestionIndex(index)}>{index + 1}</Button>)}</nav>
-          <p className="text-xs leading-5 text-muted-foreground">Ô xanh: đã trả lời · Ô trắng: chưa trả lời.</p>
-          {quiz.kind === "assignment" ? <Button className="w-full" disabled={!canAnswer} onClick={() => setDialog("submit")}>Nộp bài sớm</Button> : <p className="rounded-lg bg-slate-50 p-3 text-sm leading-6">Test không được nộp sớm. Bài sẽ tự nộp khi hết thời gian hoặc đến hạn.</p>}
-          <div className="space-y-3 border-t border-border pt-4"><h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Công cụ mô phỏng</h3>{quiz.kind === "test" ? <Button className="w-full" variant="outline" disabled={!canAnswer} onClick={() => setDialog("exit")}>Mô phỏng thoát Test</Button> : <Button className="w-full" variant="outline" disabled={!canAnswer} onClick={() => setDialog("pause")}>Mô phỏng gián đoạn</Button>}<Button className="w-full" variant="outline" disabled={busy || remaining <= 0} onClick={() => setDialog("expiry")}>Tua hết giờ lượt này</Button></div>
-        </Card>
-      </div>
-      <Dialog open={dialog !== null} onOpenChange={open => { if (!open) setDialog(null); }} title={dialog === "exit" ? "Xác nhận mô phỏng thoát Test" : dialog === "pause" ? "Tạm dừng Assignment?" : dialog === "expiry" ? "Tua hết giờ lượt hiện tại?" : "Xác nhận nộp Assignment"} description={dialog === "exit" ? "Lượt Test hiện tại sẽ kết thúc ngay và nhận 0 điểm. Bạn cần được giảng viên mở thêm lượt để làm lại. Chỉ thao tác xác nhận này mới áp dụng hình phạt trong demo." : dialog === "pause" ? "Lưu câu trả lời và tạm dừng thời gian còn lại. Hạn nộp bài vẫn áp dụng." : dialog === "expiry" ? "Bài đang làm sẽ tự nộp theo các câu đã trả lời. Thao tác này chỉ tác động lượt hiện tại." : `Bạn đã trả lời ${answered}/${questions.length} câu. Sau khi nộp, bạn không thể chỉnh sửa lượt này.`}>
-        <ActionForm submitLabel={dialog === "exit" ? "Xác nhận thoát và nhận 0 điểm" : "Xác nhận"} onCancel={() => setDialog(null)} onSubmit={async () => {
-          if (!attemptId) return;
-          const type = dialog === "exit" ? "simulateTestExit" : dialog === "pause" ? "pauseQuiz" : dialog === "expiry" ? "simulateQuizExpiry" : "submitQuiz";
-          await run(actor.id, { type, attemptId });
-          setDialog(null);
-        }}><p className="text-sm text-muted-foreground">Kiểm tra lựa chọn trước khi xác nhận.</p></ActionForm>
-      </Dialog>
-    </div>
-  );
+        {payload?.attempt.status === 'submitted' && <QuizResultSummary result={payload} />}
+        <AttemptHistory classId={classNumber} quizId={quizNumber} />
+        <Dialog open={confirm} onOpenChange={setConfirm} title="Xác nhận bắt đầu Quiz" description="Bắt đầu dùng một lượt. Mỗi Quiz có một lượt đang làm trong cycle hiện tại.">
+            <ActionForm submitLabel="Xác nhận bắt đầu" onCancel={() => setConfirm(false)} onSubmit={async () => {
+                if (!data.cycle) throw new Error('Không còn lần ghi danh hiện hành.');
+                const cycle = data.cycle.id;
+                if (!startIntent.current || startIntent.current.cycle !== cycle) startIntent.current = { cycle, key: crypto.randomUUID() };
+                try {
+                    const result = await (await services).quizzes.start(classNumber, quizNumber, cycle, startIntent.current.key);
+                    setStarted(result);
+                    if (!isRunner(result)) startIntent.current = null;
+                    setConfirm(false);
+                    void refresh();
+                } catch (error) {
+                    try {
+                        const s = await services, active = await s.quizzes.active(classNumber, quizNumber);
+                        const latest = active ?? (await s.quizzes.history(classNumber, quizNumber)).items[0];
+                        if (latest && (isRunner(latest) || latest.attempt.id !== data.latest?.attempt.id)) {
+                            setStarted(latest); setConfirm(false); void refresh(); return;
+                        }
+                    } catch { /* Giữ cùng UUID cho lần thử lại khi chưa đọc được trạng thái. */ }
+                    if (error instanceof ApiError && error.status === 409) await resource.refresh();
+                    setMessage('Chưa bắt đầu lượt mới. Đã thử đọc lại trạng thái.');
+                    throw error;
+                }
+            }}><p className="text-sm leading-6">Khi quay lại, ứng dụng khôi phục lượt đang làm và đáp án đã được server xác nhận lưu.</p></ActionForm>
+        </Dialog>
+    </div>;
 }
-
-
+function RunnerView({ classId, service, initial, onFinished }: { classId: number; service: QuizzesService; initial: QuizRunner; onFinished: (result: AttemptPayload) => void }) {
+    const { now } = useApiData(), [controller] = useState(() => new QuizAttemptController(service, classId, initial));
+    const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+    const [index, setIndex] = useState(0), [confirm, setConfirm] = useState(false), [warning, setWarning] = useState('');
+    const notified = useRef(false);
+    const cutoff = Date.parse(state.payload.attempt.effective_cutoff_at), expired = now >= cutoff;
+    const done = state.payload.attempt.status === 'submitted';
+    useEffect(() => {
+        if (!state.dirty || state.conflict || state.error || done || expired) return;
+        const timer = setTimeout(() => void controller.save(), 500);
+        return () => clearTimeout(timer);
+    }, [controller, state.answers, state.dirty, state.conflict, state.error, done, expired]);
+    useEffect(() => { if (expired && !done) void controller.recover(); }, [controller, expired, done]);
+    useEffect(() => {
+        const timer = setInterval(() => {
+            const current = controller.getSnapshot();
+            if (!current.saving && !current.submitting && !current.conflict && !current.dirty && !current.accessDenied) void controller.recover();
+        }, 5000);
+        function offline() { setWarning('Kết nối gián đoạn. Đồng hồ tiếp tục chạy. Thay đổi chưa được xác nhận lưu có thể mất khi reload hoặc tới cutoff.'); }
+        function online() { setWarning('Đang đọc lại bài làm sau khi kết nối trở lại.'); void controller.recover(true); }
+        function focus() { const current = controller.getSnapshot(); if (!current.saving && !current.submitting) void controller.recover(); }
+        window.addEventListener('offline', offline); window.addEventListener('online', online); window.addEventListener('focus', focus);
+        return () => { clearInterval(timer); window.removeEventListener('offline', offline); window.removeEventListener('online', online); window.removeEventListener('focus', focus); };
+    }, [controller]);
+    useEffect(() => {
+        if (done && !notified.current) { notified.current = true; onFinished(state.payload); }
+    }, [done, state.payload, onFinished]);
+    if (state.accessDenied) return <EmptyState title="Không còn quyền mở bài làm" description={state.error + ' Xem lịch sử tổng quát trong phần Lớp học.'} />;
+    if (!isRunner(state.payload)) return <div className="space-y-4"><Feedback message={state.error} error /><QuizResultSummary result={state.payload} /></div>;
+    const runner = state.payload, question = runner.questions[Math.min(index, Math.max(0, runner.questions.length - 1))];
+    const canEdit = now > 0 && !expired && !state.submitting && !state.conflict && !state.recovering;
+    const canSubmit = canSubmitManually(runner, now) && !state.conflict && !state.recovering && !state.submitting;
+    const answer = state.answers.find(answer => answer.question_id === question?.id)?.option_ids[0];
+    return <div className="mx-auto max-w-6xl space-y-5">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+            <div><p className="text-sm font-semibold text-primary">{runner.quiz.quiz_type === 'test' ? 'Test' : 'Assignment'} · Đang làm bài</p><h1 className="mt-2 text-2xl font-semibold">{runner.quiz.title}</h1><p className="mt-2 text-sm">Lượt {runner.attempt.attempt_number} · Cutoff {formatApiDate(runner.attempt.effective_cutoff_at)}</p></div>
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4"><p className="text-sm">Thời gian còn lại</p><p role="timer" aria-label="Thời gian còn lại" className="font-mono text-3xl font-semibold">{now ? clockLabel(cutoff - now) : 'Đang đồng bộ'}</p></div>
+        </header>
+        <Feedback message={state.error} error /><Feedback message={warning} />
+        <p role="status" className="text-sm">{state.saving ? 'Đang lưu đáp án…' : state.recovering ? 'Đang đọc lại bản server…' : state.conflict ? 'Cần đối chiếu bản lưu' : state.dirty ? 'Có thay đổi chưa lưu' : 'Đã lưu đáp án'} · Bản lưu #{runner.attempt.draft_revision}</p>
+        {expired && <p role="status" className="rounded-lg bg-amber-50 p-4 text-sm">Đã tới cutoff. Đang chờ kết quả từ server với đáp án đã lưu.</p>}
+        {state.conflict && <Card className="space-y-4 border-amber-300 p-5">
+            <h2 className="text-lg font-semibold">Đối chiếu đáp án</h2><p className="text-sm">Bản server #{state.conflict.attempt.draft_revision}. Chọn cách tiếp tục trước khi lưu hoặc nộp.</p>
+            {runner.questions.map((q, i) => {
+                const local = state.answers.find(answer => answer.question_id === q.id)?.option_ids[0], remote = state.conflict!.answers.find(answer => answer.question_id === q.id)?.option_ids[0];
+                const label = (id?: number) => q.options.find(option => option.id === id)?.option_text ?? 'Chưa chọn';
+                return <p key={q.id} className="text-sm">Câu {i + 1} · Đang chọn {label(local)} · Server {label(remote)}</p>;
+            })}
+            <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => controller.reconcile('server')}>Dùng bản server</Button><Button onClick={() => controller.reconcile('local')}>Giữ đáp án đang chọn và lưu lại</Button></div>
+        </Card>}
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(220px,1fr)]">
+            <Card className="space-y-5 p-5 sm:p-7">
+                {question && <fieldset disabled={!canEdit} className="space-y-4">
+                    <legend className="mb-4 text-lg font-semibold">Câu {index + 1} · {question.question_text}</legend>
+                    {question.options.map(option => <label key={option.id} className={'flex cursor-pointer items-start gap-3 rounded-xl border p-4 text-sm leading-7 ' + (answer === option.id ? 'border-blue-600 bg-blue-50' : '')}>
+                        <input type="radio" name={'answer-' + question.id} className="mt-1.5" checked={answer === option.id} onChange={() => controller.select(question.id, option.id)} /><span className="break-words">{option.option_text}</span>
+                    </label>)}
+                    <Button type="button" variant="outline" disabled={!canEdit || answer === undefined} onClick={() => controller.select(question.id, null)}>Bỏ chọn câu này</Button>
+                </fieldset>}
+                <div className="flex flex-wrap justify-between gap-3"><Button variant="outline" disabled={index <= 0} onClick={() => setIndex(index - 1)}>Câu trước</Button><Button variant="outline" disabled={index >= runner.questions.length - 1} onClick={() => setIndex(index + 1)}>Câu tiếp</Button></div>
+            </Card>
+            <Card className="space-y-4 p-5">
+                <h2 className="text-lg font-semibold">Danh sách câu hỏi</h2><p className="text-sm">Đã chọn {state.answers.filter(answer => answer.option_ids.length).length}/{runner.questions.length} câu</p>
+                <div className="grid grid-cols-5 gap-2">{runner.questions.map((q, i) => <Button key={q.id} variant={index === i ? 'default' : 'outline'} aria-label={'Câu ' + (i + 1) + (state.answers.some(answer => answer.question_id === q.id) ? ', đã chọn' : ', chưa chọn')} aria-current={index === i ? 'step' : undefined} onClick={() => setIndex(i)}>{i + 1}</Button>)}</div>
+                <Button className="w-full" disabled={!canSubmit} onClick={() => setConfirm(true)}>Nộp bài</Button>
+                {runner.quiz.quiz_type === 'test' && !canSubmitManually(runner, now) && !expired && <p className="text-sm">Có thể nộp tay sau {clockLabel(Date.parse(runner.attempt.started_at) + runner.quiz.duration_seconds * 1000 * 2 / 3 - now)} khi đủ 2/3 thời lượng.</p>}
+                <Button variant="outline" disabled={state.saving || state.submitting || state.recovering} onClick={() => void controller.recover(true)}>Đọc lại bài</Button>
+                {state.dirty && !state.conflict && !expired && <Button variant="outline" disabled={state.saving || state.recovering || state.submitting} onClick={() => void controller.save()}>Lưu đáp án</Button>}
+                <p className="text-xs leading-6 text-muted-foreground">Đáp án tự lưu sau khi chọn. Chỉ đáp án được xác nhận lưu trước cutoff được chấm. Đồng hồ tiếp tục khi rời trang.</p>
+            </Card>
+        </div>
+        <Dialog open={confirm} onOpenChange={setConfirm} title="Xác nhận nộp bài" description="Lưu đầy đủ đáp án trước, sau đó nộp đúng bản lưu đã được xác nhận.">
+            <ActionForm submitLabel="Xác nhận nộp bài" onCancel={() => setConfirm(false)} onSubmit={async () => {
+                await controller.submit();
+                const next = controller.getSnapshot();
+                if (next.payload.attempt.status === 'submitted' || next.conflict) setConfirm(false);
+                else if (next.error) throw new Error(next.error);
+            }}><p className="text-sm">Đã chọn {state.answers.filter(answer => answer.option_ids.length).length}/{runner.questions.length} câu. Sau khi nộp, lượt này kết thúc.</p></ActionForm>
+        </Dialog>
+    </div>;
+}

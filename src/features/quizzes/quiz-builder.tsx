@@ -1,74 +1,59 @@
-﻿"use client";
+"use client";
+import { useState } from 'react';
+import type { ApiQuiz, QuizQuestion, QuestionInput } from '@/lib/api/quizzes';
+import { useApiData } from '@/state/api-data-provider';
+import { ActionForm, Field } from '@/components/shared/management-ui';
+import { Button } from '@/components/ui/button';
+import { localLessonTime, utcLessonTime } from '@/features/lessons/lesson-status';
 
-import { useState } from "react";
-import type { Quiz, QuizQuestion } from "@/types/lms";
-import { useLms } from "@/state/lms-provider";
-import { ActionForm, Field } from "@/components/shared/management-ui";
-import { Button } from "@/components/ui/button";
-import { localLessonTime, utcLessonTime } from "@/features/lessons/lesson-status";
-
-function newQuestion(): QuizQuestion {
-  return { id: crypto.randomUUID(), prompt: "", correctOptionId: "", options: [{ id: crypto.randomUUID(), text: "" }, { id: crypto.randomUUID(), text: "" }] };
-}
-
-export function QuizBuilder({ classId, quiz, onSaved, onCancel }: { classId: string; quiz?: Quiz; onSaved: () => void; onCancel: () => void }) {
-  const { state, account, run } = useLms();
-  const [kind, setKind] = useState<Quiz["kind"]>(quiz?.kind ?? "test");
-  const [title, setTitle] = useState(quiz?.title ?? "");
-  const [passingScore, setPassingScore] = useState(String(quiz?.passingScore ?? 70));
-  const [duration, setDuration] = useState(String(quiz?.timeLimitMinutes ?? 15));
-  const [opensAt, setOpensAt] = useState(localLessonTime(quiz?.opensAt));
-  const [dueAt, setDueAt] = useState(localLessonTime(quiz?.dueAt));
-  const [limit, setLimit] = useState(quiz?.attemptLimit ? String(quiz.attemptLimit) : "");
-  const [questions, setQuestions] = useState<QuizQuestion[]>(() => quiz?.questions?.length ? structuredClone(quiz.questions) : [newQuestion()]);
-  const locked = !!quiz && (quiz.contentLocked || state.attempts.some(attempt => attempt.quizId === quiz.id));
-
-  function updateQuestion(id: string, changes: Partial<QuizQuestion>) {
-    setQuestions(previous => previous.map(question => question.id === id ? { ...question, ...changes } : question));
-  }
-
-  return <ActionForm submitLabel="Lưu bản nháp" onCancel={onCancel} onSubmit={async () => {
-    if (locked) throw new Error("Bài đã có lượt làm. Hãy sử dụng Mở lại để cấp lượt và hạn mới.");
-    if (!title.trim()) throw new Error("Vui lòng nhập tên bài.");
-    if (questions.some(question => !question.prompt.trim() || question.options.length < 2 || question.options.some(option => !option.text.trim()) || !question.options.some(option => option.id === question.correctOptionId))) {
-      throw new Error("Mỗi câu cần nội dung, ít nhất hai lựa chọn và đúng một đáp án đúng.");
-    }
-    if (Date.parse(utcLessonTime(opensAt)) >= Date.parse(utcLessonTime(dueAt))) throw new Error("Hạn nộp phải sau thời điểm mở bài.");
-    await run(account("teacher").id, {
-      type: "saveQuiz", quizId: quiz?.id, classId, kind, title,
-      passingScore: Number(passingScore), timeLimitMinutes: Number(duration),
-      opensAt: utcLessonTime(opensAt), dueAt: utcLessonTime(dueAt),
-      attemptLimit: kind === "test" ? 1 : limit ? Number(limit) : undefined, questions,
-    });
-    onSaved();
-  }}>
-    {locked && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Nội dung và cách tính điểm đã khóa vì đã có lượt làm, bao gồm lượt lịch sử. Dùng Mở lại để cấp lượt và hạn mới.</p>}
-    <fieldset disabled={locked} className="space-y-4">
-      <Field label="Loại bài *"><select className="form-control" value={kind} onChange={event => setKind(event.target.value as Quiz["kind"])}><option value="test">Test</option><option value="assignment">Assignment</option></select></Field>
-      <Field label="Tên bài *"><input required className="form-control" maxLength={150} value={title} onChange={event => setTitle(event.target.value)} /></Field>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Điểm đạt / 100 *"><input required className="form-control" type="number" min={0} max={100} value={passingScore} onChange={event => setPassingScore(event.target.value)} /></Field>
-        <Field label="Thời gian làm bài (phút) *"><input required className="form-control" type="number" min={1} step={1} value={duration} onChange={event => setDuration(event.target.value)} /></Field>
-        <Field label="Mở bài (UTC+7) *"><input required className="form-control" type="datetime-local" value={opensAt} onChange={event => setOpensAt(event.target.value)} /></Field>
-        <Field label="Hạn nộp (UTC+7) *"><input required className="form-control" type="datetime-local" min={opensAt} value={dueAt} onChange={event => setDueAt(event.target.value)} /></Field>
-      </div>
-      {kind === "test" ? <p className="text-sm text-muted-foreground">Test mặc định 1 lượt; cấp lượt bổ sung qua Mở lại hoặc duyệt yêu cầu.</p> : <Field label="Giới hạn lượt nộp" hint="Để trống: mặc định 10 lượt nộp."><input className="form-control" type="number" min={1} step={1} value={limit} onChange={event => setLimit(event.target.value)} placeholder="10" /></Field>}
-      {questions.map((question, index) => <fieldset key={question.id} className="space-y-3 rounded-xl border border-border p-4">
-        <legend className="px-1 text-sm font-semibold">Câu {index + 1}</legend>
-        <Field label={`Nội dung câu ${index + 1} *`}><textarea required className="form-control min-h-20" value={question.prompt} onChange={event => updateQuestion(question.id, { prompt: event.target.value })} /></Field>
-        <p className="text-xs text-muted-foreground">Chọn một đáp án đúng bằng nút tròn.</p>
-        {question.options.map((option, optionIndex) => <div key={option.id} className="flex items-center gap-2">
-          <input type="radio" name={`correct-${question.id}`} required aria-label={`Đáp án đúng câu ${index + 1}: lựa chọn ${optionIndex + 1}`} checked={question.correctOptionId === option.id} onChange={() => updateQuestion(question.id, { correctOptionId: option.id })} />
-          <input required className="form-control min-w-0 flex-1" aria-label={`Câu ${index + 1}, lựa chọn ${optionIndex + 1}`} value={option.text} onChange={event => updateQuestion(question.id, { options: question.options.map(item => item.id === option.id ? { ...item, text: event.target.value } : item) })} />
-          <Button type="button" variant="outline" size="sm" disabled={question.options.length <= 2} aria-label={`Xóa lựa chọn ${optionIndex + 1} câu ${index + 1}`} onClick={() => updateQuestion(question.id, { options: question.options.filter(item => item.id !== option.id), correctOptionId: question.correctOptionId === option.id ? "" : question.correctOptionId })}>Xóa</Button>
-        </div>)}
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => updateQuestion(question.id, { options: [...question.options, { id: crypto.randomUUID(), text: "" }] })}>Thêm lựa chọn câu {index + 1}</Button>
-          <Button type="button" variant="outline" size="sm" disabled={questions.length <= 1} onClick={() => setQuestions(previous => previous.filter(item => item.id !== question.id))}>Xóa câu {index + 1}</Button>
+const emptyQuestion = (): QuestionInput => ({ question_text: '', options: [{ option_text: '', is_correct: false }, { option_text: '', is_correct: false }] });
+export function QuizBuilder({ classId, definition, onSaved, onCancel }: {
+    classId: number; definition?: { quiz: ApiQuiz; questions: QuizQuestion[] }; onSaved: (id: number) => void; onCancel: () => void;
+}) {
+    const { services, write, now } = useApiData(), quiz = definition?.quiz;
+    const [title, setTitle] = useState(quiz?.title ?? ''), [description, setDescription] = useState(quiz?.description ?? '');
+    const [kind, setKind] = useState<'test' | 'assignment'>(quiz?.quiz_type ?? 'assignment');
+    const [duration, setDuration] = useState(String(quiz?.duration_seconds ?? 600)), [pass, setPass] = useState(String(quiz?.pass_score ?? 70));
+    const [limit, setLimit] = useState(quiz ? String(quiz.attempt_limit) : '');
+    const [open, setOpen] = useState(localLessonTime(quiz?.open_at ?? new Date(now - 60000).toISOString()));
+    const [deadline, setDeadline] = useState(localLessonTime(quiz?.deadline ?? new Date(now + 7 * 86400000).toISOString()));
+    const [questions, setQuestions] = useState<QuestionInput[]>(definition?.questions.map(question => ({
+        question_text: question.question_text, options: question.options.map(option => ({ option_text: option.option_text, is_correct: option.is_correct === true }))
+    })) ?? [emptyQuestion()]);
+    const changeQuestion = (index: number, patch: Partial<QuestionInput>) => setQuestions(previous => previous.map((question, i) => i === index ? { ...question, ...patch } : question));
+    return <ActionForm submitLabel="Lưu bản nháp Quiz" onCancel={onCancel} onSubmit={async () => {
+        const saved = await write(async () => (await services).quizzes.save(classId, {
+            title, description, quiz_type: kind, duration_seconds: Number(duration), pass_score: Number(pass),
+            open_at: utcLessonTime(open), deadline: utcLessonTime(deadline), attempt_limit: kind === 'test' ? 1 : limit ? Number(limit) : null, questions
+        }, quiz?.id));
+        onSaved(saved.quiz.id);
+    }}>
+        {quiz?.is_published && <p className="rounded-lg bg-amber-50 p-3 text-sm">Bài đã phát hành. Các thay đổi chỉ được lưu khi chưa có bất kỳ lượt làm nào.</p>}
+        <Field label="Loại Quiz *"><select className="form-control" value={kind} onChange={event => setKind(event.target.value as typeof kind)}><option value="assignment">Assignment</option><option value="test">Test</option></select></Field>
+        <Field label="Tên Quiz *"><input required maxLength={200} className="form-control" value={title} onChange={event => setTitle(event.target.value)} /></Field>
+        <Field label="Mô tả"><textarea maxLength={10000} className="form-control" value={description} onChange={event => setDescription(event.target.value)} /></Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Thời lượng (giây) *"><input type="number" required min="1" max="31536000" step="1" className="form-control" value={duration} onChange={event => setDuration(event.target.value)} /></Field>
+            <Field label="Điểm đạt (%) *"><input type="number" required min="0" max="100" step="any" className="form-control" value={pass} onChange={event => setPass(event.target.value)} /></Field>
+            <Field label="Mở bài (Việt Nam) *"><input type="datetime-local" required className="form-control" value={open} onChange={event => setOpen(event.target.value)} /></Field>
+            <Field label="Hạn nộp (Việt Nam) *"><input type="datetime-local" required className="form-control" value={deadline} onChange={event => setDeadline(event.target.value)} /></Field>
         </div>
-      </fieldset>)}
-      <Button type="button" variant="outline" onClick={() => setQuestions(previous => [...previous, newQuestion()])}>Thêm câu hỏi</Button>
-    </fieldset>
-    <p className="text-sm text-muted-foreground">Sau khi lưu, chọn Xem trước và xuất bản để kiểm tra toàn bộ bài.</p>
-  </ActionForm>;
+        {kind === 'assignment' ? <Field label="Giới hạn lượt" hint="Để trống dùng mặc định 10 lượt. Mỗi lần bắt đầu dùng một lượt."><input type="number" min="1" step="1" className="form-control" placeholder="10" value={limit} onChange={event => setLimit(event.target.value)} /></Field> : <p className="text-sm">Test mặc định một lượt, nộp tay từ đúng 2/3 thời lượng.</p>}
+        {questions.map((question, index) => <fieldset key={index} className="space-y-3 rounded-xl border p-4">
+            <legend className="px-2 font-semibold">Câu {index + 1}</legend>
+            <Field label={'Nội dung câu ' + (index + 1) + ' *'}><textarea required maxLength={10000} className="form-control" value={question.question_text} onChange={event => changeQuestion(index, { question_text: event.target.value })} /></Field>
+            <p className="text-sm">Chọn đúng một đáp án đúng.</p>
+            {question.options.map((option, order) => <div key={order} className="flex items-center gap-2">
+                <input type="radio" required name={'correct-' + index} aria-label={'Đáp án đúng câu ' + (index + 1) + ', lựa chọn ' + (order + 1)} checked={option.is_correct} onChange={() => changeQuestion(index, { options: question.options.map((item, i) => ({ ...item, is_correct: i === order })) })} />
+                <input required maxLength={10000} className="form-control min-w-0 flex-1" aria-label={'Câu ' + (index + 1) + ', lựa chọn ' + (order + 1)} value={option.option_text} onChange={event => changeQuestion(index, { options: question.options.map((item, i) => i === order ? { ...item, option_text: event.target.value } : item) })} />
+                <Button type="button" variant="outline" size="sm" disabled={question.options.length <= 2} aria-label={'Xóa lựa chọn ' + (order + 1) + ' câu ' + (index + 1)} onClick={() => changeQuestion(index, { options: question.options.filter((_, i) => i !== order) })}>Xóa</Button>
+            </div>)}
+            <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={question.options.length >= 100} onClick={() => changeQuestion(index, { options: [...question.options, { option_text: '', is_correct: false }] })}>Thêm lựa chọn câu {index + 1}</Button>
+                <Button type="button" variant="outline" size="sm" disabled={questions.length <= 1} onClick={() => setQuestions(previous => previous.filter((_, i) => i !== index))}>Xóa câu {index + 1}</Button>
+            </div>
+        </fieldset>)}
+        <Button type="button" variant="outline" disabled={questions.length >= 500} onClick={() => setQuestions(previous => [...previous, emptyQuestion()])}>Thêm câu hỏi</Button>
+        <p className="text-sm text-muted-foreground">Sau khi lưu, mở Xem trước để kiểm tra nội dung trước khi phát hành.</p>
+    </ActionForm>;
 }
