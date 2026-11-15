@@ -1,4 +1,5 @@
 "use client";
+import { detailHref } from "@/config/routes";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -18,25 +19,25 @@ import { ProgressChart } from "./progress-chart";
 export function AdminDashboard({ data }: { data: DashboardData }) {
   const [query, setQuery] = useState("");
   const [selectedClass, setSelectedClass] = useState("all");
-  const rows = data.classes.filter(c => `${c.name} ${c.code} ${c.teacher.name}`.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi")));
+  const rows = data.classes.filter(c => `${c.name} ${c.code} ${c.manager.name}`.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi")));
   const chartRows = data.classes.filter(c => selectedClass === "all" || c.id === selectedClass);
   const requests = data.requests.filter(r => r.status === "waiting");
-  const assignedTeachers = new Set(data.classes.map(c => c.teacherId)).size;
+  const assignedManagers = new Set(data.classes.map(c => c.managerId)).size;
 
   return <DashboardPage>
     <PageHeader eyebrow="Không gian quản trị" title="Tổng quan hệ thống" description="Chào Minh Anh, cùng theo dõi hoạt động học tập và những lịch học cần xem xét." actions={<Button asChild><a href="#schedule-requests"><ClipboardCheck />Xem lịch chờ duyệt</a></Button>} />
     <DemoDate referenceTime={data.referenceTime} />
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label="Tổng học viên" value={data.stats.students} detail="Tài khoản học viên duy nhất trong hệ thống" icon={Users} />
-      <StatCard label="Giảng viên" value={data.stats.teachers} detail={`${assignedTeachers} giảng viên đang phụ trách ${data.stats.classes} lớp`} icon={GraduationCap} tone="violet" />
+      <StatCard label="Quản lý lớp" value={data.stats.managers} detail={`${assignedManagers} quản lý lớp đang phụ trách ${data.stats.classes} lớp`} icon={GraduationCap} tone="violet" />
       <StatCard label="Lớp học trong hệ thống" value={data.stats.classes} detail={`${data.classes.reduce((sum, c) => sum + c.students, 0)} lượt đăng ký đã được duyệt`} icon={BookOpen} tone="teal" />
       <StatCard label="Lịch học chờ duyệt" value={data.stats.pending} detail="Yêu cầu thuộc quyền xử lý của Admin" icon={ClipboardCheck} tone="amber" />
     </div>
     <section aria-labelledby="class-overview">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-4"><div><h2 id="class-overview" className="text-xl font-semibold">Tổng quan lớp học</h2><p className="mt-1 text-sm text-muted-foreground">Sĩ số, phân công giảng viên và số buổi đã dạy</p></div>
-        <div className="relative max-w-full"><Search size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" /><label htmlFor="class-search" className="sr-only">Tìm lớp học hoặc giảng viên</label><input id="class-search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm lớp hoặc giảng viên…" className="h-10 w-64 max-w-full rounded-lg border border-border bg-white pl-9 pr-3 text-sm" /></div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-4"><div><h2 id="class-overview" className="text-xl font-semibold">Tổng quan lớp học</h2><p className="mt-1 text-sm text-muted-foreground">Sĩ số, phân công quản lý lớp và số buổi đã dạy</p></div>
+        <div className="relative max-w-full"><Search size={16} className="pointer-events-none absolute left-3 top-3 text-slate-400" /><label htmlFor="class-search" className="sr-only">Tìm lớp học hoặc quản lý lớp</label><input id="class-search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm lớp hoặc quản lý lớp…" className="h-10 w-64 max-w-full rounded-lg border border-border bg-white pl-9 pr-3 text-sm" /></div>
       </div>
-      {rows.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{rows.map(course => <ClassCard key={course.id} course={course} expired={isExpired(course, Date.parse(data.referenceTime))} href={`/admin/classes/${course.id}`} />)}</div> : <div aria-live="polite"><EmptyState title="Không tìm thấy lớp học" description="Thử tên lớp, mã lớp hoặc tên giảng viên khác." /><Button variant="outline" size="sm" onClick={() => setQuery("")}>Xóa tìm kiếm</Button></div>}
+      {rows.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{rows.map(course => <ClassCard key={course.id} course={course} expired={isExpired(course, Date.parse(data.referenceTime))} href={detailHref('admin', course.id)} />)}</div> : <div aria-live="polite"><EmptyState title="Không tìm thấy lớp học" description="Thử tên lớp, mã lớp hoặc tên quản lý lớp khác." /><Button variant="outline" size="sm" onClick={() => setQuery("")}>Xóa tìm kiếm</Button></div>}
       <p aria-live="polite" className="mt-3 text-xs text-muted-foreground">Hiển thị {rows.length} trên {data.classes.length} lớp học</p>
     </section>
     <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
@@ -49,8 +50,8 @@ export function AdminDashboard({ data }: { data: DashboardData }) {
     </div>
     <div className="grid items-start gap-6 xl:grid-cols-2"><div id="schedule-requests" className="min-w-0 scroll-mt-6"><RequestList title="Lịch học chờ phê duyệt" requests={requests} /></div><NotificationList title="Hoạt động gần đây" notifications={data.activities} /></div>
     <Card className="p-5 sm:p-6"><h2 className="text-lg font-semibold">Thao tác nhanh</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Xem các mục quản lý hoặc kiểm tra yêu cầu ngay trên dashboard.</p>
-      <div className="mt-4 flex flex-wrap gap-3"><Button asChild variant="outline"><a href="#class-overview"><BookOpen />Xem các lớp</a></Button><Button asChild variant="outline"><a href="#schedule-requests"><ClipboardCheck />Xem yêu cầu lịch học</a></Button><Button asChild variant="outline"><Link href="/admin/students"><Users />Danh sách học viên</Link></Button><Button asChild variant="outline"><Link href="/admin/teachers"><GraduationCap />Danh sách giảng viên</Link></Button></div>
-      <div className="mt-4 flex flex-wrap gap-3"><Button asChild size="sm"><Link href="/admin/classes">Quản lý và tạo lớp</Link></Button><Button asChild size="sm" variant="outline"><Link href="/admin/students">Quản lý và thêm tài khoản</Link></Button></div><p className="mt-3 text-xs leading-5 text-muted-foreground">Thay đổi quản lý được lưu trong trình duyệt demo. Duyệt lịch và làm bài chưa triển khai.</p>
+      <div className="mt-4 flex flex-wrap gap-3"><Button asChild variant="outline"><a href="#class-overview"><BookOpen />Xem các lớp</a></Button><Button asChild variant="outline"><a href="#schedule-requests"><ClipboardCheck />Xem yêu cầu lịch học</a></Button><Button asChild variant="outline"><Link href="/admin/students"><Users />Danh sách học viên</Link></Button><Button asChild variant="outline"><Link href="/admin/managers"><GraduationCap />Danh sách quản lý lớp</Link></Button></div>
+      <div className="mt-4 flex flex-wrap gap-3"><Button asChild size="sm"><Link href="/admin/classes">Quản lý và tạo lớp</Link></Button><Button asChild size="sm" variant="outline"><Link href="/admin/students">Quản lý và thêm tài khoản</Link></Button></div><p className="mt-3 text-xs leading-5 text-muted-foreground">Dữ liệu và các thao tác được mô phỏng, lưu trong trình duyệt demo.</p>
     </Card>
   </DashboardPage>;
 }
