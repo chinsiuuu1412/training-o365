@@ -1,8 +1,8 @@
 import { StatusBadge } from "@/components/shared/status-badge";
 
-const labels: Record<string, string> = { draft: "Bản nháp", waiting: "Chờ Admin duyệt", declined: "Bị từ chối", approved: "Đã duyệt · Chưa xác nhận", late: "Quá hạn xác nhận", confirmed: "Đã xác nhận", active: "Đang diễn ra", completed: "Đã hoàn thành", cancelled: "Đã hủy" };
+const labels: Record<string, string> = { draft: "Bản nháp", pending: "Chờ Admin duyệt", rejected: "Bị từ chối", waiting: "Chờ Admin duyệt", declined: "Bị từ chối", approved: "Đã duyệt", active: "Đang diễn ra", completed: "Đã kết thúc", cancelled: "Đã hủy" };
 export function LessonStatus({ status }: { status: string }) {
-  const badge = status === "draft" ? "available" : status === "late" ? "declined" : status === "completed" ? "confirmed" : status === "active" ? "active" : status === "waiting" ? "waiting" : status === "declined" ? "declined" : status === "approved" ? "approved" : status === "confirmed" ? "confirmed" : "cancelled";
+  const badge = status === "draft" ? "available" : status === "completed" ? "confirmed" : status === "active" ? "active" : ["waiting", "pending"].includes(status) ? "waiting" : ["declined", "rejected"].includes(status) ? "declined" : status === "approved" ? "approved" : "cancelled";
   return <StatusBadge status={badge} label={labels[status] ?? status} />;
 }
 

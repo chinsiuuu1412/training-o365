@@ -1,74 +1,97 @@
 "use client";
-import { useState } from "react";
-import { AttachedMaterials } from "@/features/materials/attached-materials";
-import type { Role } from "@/types/lms";
-import { useLms } from "@/state/lms-provider";
-import { canAccessClass, isExpired } from "@/mocks/services/management";
-import { getLessonStatus } from "@/mocks/services/lessons";
-import { ActionForm, Feedback, Field } from "@/components/shared/management-ui";
-import { EmptyState } from "@/components/shared/states";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
-import { formatDate } from "@/features/dashboard/dashboard-parts";
-import { LessonForm } from "./lesson-form";
-import { LessonAttendance } from "./lesson-attendance";
-import { LessonStatus, localLessonTime, utcLessonTime } from "./lesson-status";
+import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import type { Role } from '@/types/lms';
+import { useApiData, useApiResource, formatApiDate } from '@/state/api-data-provider';
+import { ResourceFeedback, Pagination, Feedback, ConfirmAction } from '@/components/shared/management-ui';
+import { EmptyState } from '@/components/shared/states';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
+import { LessonForm, ScheduleDraftForm } from './lesson-form';
+import { LessonAttendance } from './lesson-attendance';
+import { LessonStatus } from './lesson-status';
+import { detailHref } from '@/config/routes';
+import { communicationsEnabled } from '@/state/auth-provider';
+import { AttachedMaterials } from '@/features/materials/attached-materials';
 
-export function LessonWorkspace({ role, classId }: { role: Role; classId: string }) {
-  const { state, now, account, run } = useLms();
-  const actor = account(role);
-  const [selected, setSelected] = useState("");
-  const [editor, setEditor] = useState<string | null>(null);
-  const [makeup, setMakeup] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const course = state.classes.find(c => c.id === classId);
-  const current = { ...state, referenceTime: new Date(now).toISOString() };
-  if (!course || !canAccessClass(current, actor.id, classId) || (role === "student" && isExpired(course, now))) return <EmptyState title="Không thể truy cập buổi học" description="Bạn cần quyền truy cập lớp còn hạn để xem nội dung này." />;
-  const expired = isExpired(course, now);
-  const lessons = state.lessons.filter(l => l.classId === classId && (role !== "student" || l.completed || state.schedules.some(s => s.lessonId === l.id && ["approved", "confirmed"].includes(s.status))));
-  const lesson = lessons.find(l => l.id === selected);
-  const schedule = lesson && state.schedules.find(s => s.lessonId === lesson.id && ["approved", "confirmed", "cancelled"].includes(s.status));
-  const draft = lesson?.draft;
-  const shownDraft = role !== "student" && !schedule ? draft : undefined;
-  const materialIds = shownDraft?.materialIds ?? lesson?.materialIds ?? [];
-  const status = lesson ? getLessonStatus(state, lesson.id, now) : "draft";
-  const pending = lesson && state.requests.some(r => r.lessonId === lesson.id && ["schedule", "teacher-leave"].includes(r.kind) && r.status === "waiting");
-  const editable = role === "teacher" && !expired && !!lesson && !lesson.completed && status !== "active" && status !== "completed" && !pending;
-  const canConfirm = !!schedule && schedule.status === "approved" && Date.parse(schedule.startsAt) - now >= 86400000 && !expired;
-  const canMakeup = !!schedule && (["approved", "confirmed"].includes(schedule.status) ? Date.parse(schedule.startsAt) - now >= 86400000 : schedule.status === "cancelled") && !pending && !expired;
-  const available = state.lessons.some(l => l.classId === classId && !l.completed && !l.draft && !state.schedules.some(s => s.lessonId === l.id));
-  const requests = lesson ? state.requests.filter(r => r.lessonId === lesson.id && ["schedule", "teacher-leave"].includes(r.kind)) : [];
-  return <section className="space-y-5" aria-label="Buổi học và điểm danh">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Buổi học</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{course.totalLessons} buổi cố định · Lịch và giờ học dùng UTC+7.</p></div>{role === "teacher" && <Button disabled={!available || expired} onClick={() => setEditor("new")}>Tạo buổi học</Button>}</div>
-    <Feedback message={message} />
-    <Feedback message={error} error />
-    {expired && <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Lớp đã hết hạn. Chỉ xem dữ liệu; không tạo hoặc thay đổi buổi học.</p>}
-    {!lessons.length ? <EmptyState title={role === "student" ? "Chưa có buổi học được duyệt" : "Chưa có buổi học"} description={role === "student" ? "Buổi học sẽ hiển thị khi Admin duyệt lịch. Bạn cần chờ giảng viên xác nhận trước khi tham gia." : "Thiết lập tổng số buổi cố định trong Tổng quan lớp trước khi tạo nội dung và lịch học."} /> : <div className="grid items-start gap-5 xl:grid-cols-[minmax(240px,0.75fr)_minmax(0,2fr)]"><Card className="min-w-0 overflow-hidden"><ul className="divide-y divide-border">{lessons.map(l => {
-      const s = state.schedules.find(s => s.lessonId === l.id && s.status !== "cancelled");
-      return <li key={l.id}><button type="button" aria-pressed={selected === l.id} onClick={() => { setSelected(l.id); setMessage(""); setError(""); }} className={`w-full space-y-2 p-4 text-left transition-colors hover:bg-blue-50 ${selected === l.id ? "bg-blue-50 ring-2 ring-inset ring-blue-500" : ""}`}><span className="block text-sm font-semibold">{role !== "student" && l.draft ? l.draft.title : l.name}</span><LessonStatus status={getLessonStatus(state, l.id, now)} /><span className="block text-xs leading-5 text-muted-foreground">{s ? formatDate(s.startsAt) : l.draft ? formatDate(l.draft.startsAt) : "Chưa thiết lập lịch"}</span></button></li>;
-    })}</ul></Card>
-      {lesson ? <div className="min-w-0 space-y-5"><Card className="space-y-4 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><h3 className="text-xl font-semibold">{shownDraft?.title ?? lesson.name}</h3><LessonStatus status={status} /></div><p className="whitespace-pre-wrap text-sm leading-7 text-slate-600">{lesson.description || (role !== "student" ? draft?.description : "") || "Chưa có mô tả buổi học."}</p>
-        {schedule ? <div className="rounded-xl bg-slate-50 p-4 text-sm leading-7"><p><strong>Bắt đầu:</strong> {formatDate(schedule.startsAt)} (UTC+7)</p><p><strong>Kết thúc:</strong> {formatDate(schedule.endsAt)} (UTC+7)</p>{schedule.status === "approved" && <p className="text-amber-800">Lịch đã duyệt, đang chờ giảng viên xác nhận. Chưa mở điểm danh.</p>}</div> : <p className="text-sm text-muted-foreground">Chưa có lịch đã được duyệt.</p>}
-        {role !== "student" && draft && <div className="space-y-1 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6"><p className="font-medium">{pending ? "Đề xuất đang chờ Admin duyệt" : "Bản nháp / Đề xuất"}: {draft.title}</p><p>{formatDate(draft.startsAt)} — {formatDate(draft.endsAt)} (UTC+7)</p><p>Lịch hiện tại vẫn có hiệu lực cho đến khi Admin duyệt đề xuất.</p></div>}
-        {role === "teacher" && <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!editable} onClick={() => setEditor(lesson.id)}>Chỉnh sửa bản nháp</Button>{draft && <Button disabled={!editable} onClick={async () => { try { setError(""); await run(actor.id, { type: "submitSchedule", lessonId: lesson.id }); setMessage("Đã gửi lịch học cho Admin duyệt."); } catch (error) { setError(error instanceof Error ? error.message : "Không thể gửi lịch."); } }}>Gửi Admin duyệt lịch</Button>}{schedule?.status === "approved" && <Button disabled={!canConfirm} onClick={async () => { try { setError(""); await run(actor.id, { type: "confirmLesson", lessonId: lesson.id }); setMessage("Đã xác nhận buổi học và thông báo cho học viên."); } catch (error) { setError(error instanceof Error ? error.message : "Không thể xác nhận."); } }}>Xác nhận diễn ra</Button>}{schedule && <Button variant="outline" disabled={!canMakeup} onClick={() => setMakeup(true)}>Xin nghỉ & đề xuất học bù</Button>}</div>}
-        {role === "teacher" && schedule?.status === "approved" && !canConfirm && <p className="text-sm leading-6 text-amber-800">Cần xác nhận ít nhất 24 giờ trước giờ học. Khi quá hạn, liên hệ Admin xử lý.</p>}
-        <AttachedMaterials role={role} classId={classId} lessonId={lesson.id} materialIds={materialIds} />
-        {role !== "student" && requests.length > 0 && <div className="space-y-3 border-t border-border pt-4"><h4 className="text-sm font-semibold">Lịch sử yêu cầu</h4>{requests.map(r => <article key={r.id} className="text-sm leading-6"><p className="font-medium">{r.title} · {r.status === "waiting" ? "Chờ duyệt" : r.status === "approved" ? "Đã duyệt" : r.status === "declined" ? "Bị từ chối" : "Đã hủy"}</p>{r.resolutionReason && <p className="text-red-700">Lý do: {r.resolutionReason}</p>}</article>)}</div>}
-      </Card>{!expired && <LessonAttendance key={`${actor.id}-${lesson.id}`} role={role} lessonId={lesson.id} classId={classId} />}</div> : <EmptyState title="Chọn một buổi học" description="Xem lịch học, tài liệu đính kèm và trạng thái điểm danh tại đây." />}
-    </div>}
-    {role === "teacher" && <Dialog open={editor !== null} onOpenChange={open => { if (!open) setEditor(null); }} title={editor === "new" ? "Tạo buổi học" : "Chỉnh sửa buổi học"} description="Lưu bản nháp, sau đó gửi Admin duyệt lịch. Không thay đổi tổng số buổi cố định.">{editor !== null && <LessonForm key={editor} classId={classId} lesson={state.lessons.find(l => l.id === editor)} onCancel={() => setEditor(null)} onSaved={id => { setEditor(null); setSelected(id); setMessage("Đã lưu bản nháp. Gửi Admin duyệt để lịch có hiệu lực."); }} />}</Dialog>}
-    {role === "teacher" && lesson && <Dialog open={makeup} onOpenChange={setMakeup} title="Xin nghỉ & đề xuất học bù" description="Phải gửi thời gian học bù cùng lý do, ít nhất 24 giờ trước buổi học. Lịch bù dùng lại buổi cố định này."><MakeupForm key={lesson.id} startsAt={schedule?.startsAt} endsAt={schedule?.endsAt} onCancel={() => setMakeup(false)} onSubmit={async (startsAt, endsAt, reason) => { await run(actor.id, { type: "requestMakeup", lessonId: lesson.id, startsAt, endsAt, reason }); setMakeup(false); setMessage("Đã gửi yêu cầu nghỉ và lịch học bù cho Admin duyệt."); }} /></Dialog>}
-    <p className="text-xs leading-5 text-muted-foreground">Mô phỏng lưu trên trình duyệt; thông báo theo giờ và đồng bộ nhiều người dùng thực tế cần backend.</p>
-  </section>;
+export function LessonWorkspace({ role, classId, total, expired }: { role: Role; classId: number; total: number | null; expired: boolean }) {
+    const query = useSearchParams(), router = useRouter(), { now } = useApiData();
+    const [page, setPage] = useState(1);
+    const selected = Number(query.get('sessionId')) || 0;
+    const selectSession = (id: number) => router.replace(detailHref(role, String(classId), undefined, 'lessons') + '&sessionId=' + id, { scroll: false });
+    const [create, setCreate] = useState(false), [message, setMessage] = useState('');
+    const list = useApiResource('sessions:' + role + ':' + classId + ':' + page, s => s.sessions.list(role, classId, page));
+    return <section className="space-y-5" aria-label="Buổi học và điểm danh">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-xl font-semibold">Buổi học</h2><p className="mt-2 text-sm text-muted-foreground">{total ?? 'Chưa thiết lập'} buổi bắt buộc · Thời gian Việt Nam</p></div>
+            <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void list.refresh()}>Làm mới buổi học</Button>
+                {role === 'manager' && !expired && <Button disabled={!total} onClick={() => setCreate(true)}>Tạo buổi học</Button>}
+            </div>
+        </div>
+        {expired && <p role="status" className="text-sm">Lớp đã hết hạn, chỉ xem lịch sử.</p>}
+        <Feedback message={message} /><ResourceFeedback resource={list} />
+        {list.data && <div className="grid items-start gap-5 xl:grid-cols-[minmax(220px,0.7fr)_minmax(0,2fr)]">
+            <div className="min-w-0 space-y-4">
+                <Card className="overflow-hidden"><ul className="divide-y divide-border">
+                    {list.data.items.map(session => <li key={session.id}>
+                        <button type="button" aria-pressed={selected === session.id} className={'w-full space-y-2 p-4 text-left transition-colors hover:bg-blue-50 ' + (selected === session.id ? 'bg-blue-50 ring-2 ring-inset ring-blue-500' : '')} onClick={() => selectSession(session.id)}>
+                            <span className="block font-semibold">Buổi {session.session_number} · {session.title}</span>
+                            <LessonStatus status={!session.approved_proposal_id ? 'draft' : now >= Date.parse(session.ends_at!) ? 'completed' : now >= Date.parse(session.starts_at!) ? 'active' : 'approved'} />
+                            <span className="block text-xs">{session.approved_proposal_id ? formatApiDate(session.starts_at) : 'Chưa có lịch hiệu lực'}</span>
+                        </button>
+                    </li>)}
+                </ul>{!list.data.items.length && <EmptyState title="Chưa có buổi học" description={role === 'student' ? 'Buổi học xuất hiện sau khi Admin duyệt lịch.' : 'Đặt tổng số buổi trong Tổng quan, sau đó tạo buổi học.'} />}</Card>
+                <Pagination {...list.data} onPage={setPage} />
+            </div>
+            {selected ? <SessionDetail key={role + ':' + selected} role={role} classId={classId} sessionId={selected} expired={expired} /> : <EmptyState title="Chọn một buổi học" description="Xem lịch có hiệu lực và Attendance tại đây." />}
+        </div>}
+        <Dialog open={create} onOpenChange={setCreate} title="Tạo buổi học" description="Nội dung buổi học và mã điểm danh. Lịch được gửi duyệt riêng.">
+            {create && <LessonForm classId={classId} total={total ?? 0} onCancel={() => setCreate(false)} onSaved={session => { selectSession(session.id); setCreate(false); setMessage('Đã tạo buổi học. Lưu bản nháp lịch để gửi duyệt.'); }} />}
+        </Dialog>
+    </section>;
 }
-
-function MakeupForm({ startsAt, endsAt, onCancel, onSubmit }: { startsAt?: string; endsAt?: string; onCancel: () => void; onSubmit: (start: string, end: string, reason: string) => Promise<void> }) {
-  const [start, setStart] = useState(localLessonTime(startsAt));
-  const [end, setEnd] = useState(localLessonTime(endsAt));
-  const [reason, setReason] = useState("");
-  return <ActionForm submitLabel="Gửi yêu cầu nghỉ và lịch bù" onCancel={onCancel} onSubmit={async () => onSubmit(utcLessonTime(start), utcLessonTime(end), reason)}><Field label="Lý do nghỉ *"><textarea required maxLength={1000} className="form-control min-h-24" value={reason} onChange={e => setReason(e.target.value)} /></Field><Field label="Bắt đầu buổi bù (UTC+7) *"><input required type="datetime-local" className="form-control" value={start} onChange={e => setStart(e.target.value)} /></Field><Field label="Kết thúc buổi bù (UTC+7) *"><input required type="datetime-local" min={start} className="form-control" value={end} onChange={e => setEnd(e.target.value)} /></Field></ActionForm>;
+function SessionDetail({ role, classId, sessionId, expired }: { role: Role; classId: number; sessionId: number; expired: boolean }) {
+    const { now, services, write } = useApiData(), [edit, setEdit] = useState(false), [message, setMessage] = useState('');
+    const resource = useApiResource('session:' + role + ':' + classId + ':' + sessionId, s => s.sessions.detail(role, classId, sessionId));
+    const session = resource.data?.session, proposals = resource.data?.proposals ?? [];
+    const draft = proposals.find(row => row.status === 'draft'), pending = proposals.some(row => row.status === 'pending');
+    const editable = role === 'manager' && !expired && !pending && !!session && now > 0 && (!session.approved_proposal_id || now < Date.parse(session.starts_at!));
+    return <div className="min-w-0 space-y-5">
+        <ResourceFeedback resource={resource} /><Feedback message={message} />
+        {session && <>
+            <Card className="space-y-4 p-5">
+                <h3 className="text-xl font-semibold">{session.title}</h3>
+                <p className="whitespace-pre-wrap break-words text-sm leading-7">{session.description || 'Chưa có mô tả.'}</p>
+                {session.location && <p className="break-words text-sm">Địa điểm / link học · {session.location}</p>}
+                <div className="rounded-xl bg-slate-50 p-4 text-sm leading-7">
+                    <h4 className="font-semibold">Lịch đang có hiệu lực</h4>
+                    {session.approved_proposal_id ? <><p>{formatApiDate(session.starts_at)} — {formatApiDate(session.ends_at)} (Việt Nam)</p><p>Admin đã duyệt. Điểm danh mở trong giờ học.</p></> : <p>Chưa có lịch được duyệt.</p>}
+                </div>
+                {role !== 'student' && <p className="text-sm">Mã điểm danh · <strong className="font-mono">{session.attendance_code}</strong></p>}
+                {role === 'manager' && <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" disabled={!editable} onClick={() => setEdit(true)}>{draft ? 'Sửa bản nháp lịch' : 'Tạo bản nháp lịch'}</Button>
+                    {editable && draft && <ConfirmAction title="Gửi Admin duyệt lịch?" trigger="Gửi Admin duyệt lịch" needsReason={false} description="Lịch hiệu lực hiện tại được giữ trong thời gian chờ duyệt." onConfirm={async () => {
+                        await write(async () => (await services).sessions.submit(classId, session.id, draft.id));
+                        setMessage('Đã gửi đề xuất lịch cho Admin.');
+                    }} />}
+                </div>}
+                {role !== 'student' && proposals.length > 0 && <div className="space-y-3 border-t pt-4">
+                    <h4 className="font-semibold">Lịch sử đề xuất</h4>
+                    {proposals.map(row => <article key={row.id} className="space-y-2 rounded-lg border p-3 text-sm">
+                        <LessonStatus status={row.status} /><p>{formatApiDate(row.starts_at)} — {formatApiDate(row.ends_at)}</p>
+                        <p>Người gửi #{row.proposed_by}{row.reviewed_by && ' · Người duyệt #' + row.reviewed_by}</p>
+                        {row.reason && <p className="whitespace-pre-wrap text-red-800">Phản hồi · {row.reason}</p>}
+                    </article>)}
+                </div>}
+            </Card>
+            <LessonAttendance key={role + ':' + session.id} role={role} session={session} expired={expired} />
+            {communicationsEnabled && <AttachedMaterials role={role} classId={classId} sessionId={session.id} />}
+            <Dialog open={edit} onOpenChange={setEdit} title="Bản nháp lịch" description="Thời gian theo Việt Nam. Lịch cần Admin duyệt để có hiệu lực.">
+                {edit && <ScheduleDraftForm classId={classId} session={session} draft={draft} onCancel={() => setEdit(false)} onSaved={() => { setEdit(false); setMessage('Đã lưu bản nháp lịch.'); }} />}
+            </Dialog>
+        </>}
+    </div>;
 }
 
 

@@ -1,26 +1,48 @@
 "use client";
-import { useState } from "react";
-import Link from "next/link";
-import { useLms } from "@/state/lms-provider";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Dialog } from "@/components/ui/dialog";
-import { ActionForm, Field, Feedback } from "@/components/shared/management-ui";
-import { EmptyState } from "@/components/shared/states";
-import { formatDate } from "@/features/dashboard/dashboard-parts";
+import Link from 'next/link';
+import { useState } from 'react';
+import { useApiData, useApiResource, formatApiDate } from '@/state/api-data-provider';
+import type { PendingProposal } from '@/lib/api/sessions';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Dialog } from '@/components/ui/dialog';
+import { ActionForm, Field, Feedback, Pagination, ResourceFeedback } from '@/components/shared/management-ui';
+import { PageHeader } from '@/components/shared/page-header';
+import { EmptyState } from '@/components/shared/states';
+import { detailHref } from '@/config/routes';
 
 export function ApprovalQueue() {
- const {state,now,account,run}=useLms(); const [view,setView]=useState("waiting"); const [selected,setSelected]=useState<{id:string;approved:boolean}|null>(null); const [message,setMessage]=useState("");
- const rows=state.requests.filter(r=>["schedule","teacher-leave","attendance-correction"].includes(r.kind)&&(view==="history"?r.status!=="waiting":r.status==="waiting"));
- const alerts=state.schedules.filter(s=>s.status==="approved"&&Date.parse(s.startsAt)-86400000<now&&!state.lessons.find(l=>l.id===s.lessonId)?.completed);
- const [reasonValue,setReasonValue]=useState("");
- const request=state.requests.find(r=>r.id===selected?.id);
- return <div className="dashboard-page space-y-6"><div><p className="text-xs font-semibold text-primary">Không gian quản trị</p><h1 className="mt-2 text-3xl font-semibold">Lịch học & điều chỉnh điểm danh</h1><p className="mt-3 text-sm text-muted-foreground">Phê duyệt mô phỏng theo Workflow 4–5. Thời hạn và mã thật cần backend.</p></div><Feedback message={message}/><div className="flex flex-wrap gap-2">{[["waiting","Đang chờ"],["history","Đã xử lý"],["alerts",`Chưa xác nhận (${alerts.length})`]].map(([id,label])=><Button key={id} variant={view===id?"default":"outline"} aria-pressed={view===id} onClick={()=>setView(id)}>{label}</Button>)}</div>
- {view==="alerts" ? alerts.length?alerts.map(s=>{const lesson=state.lessons.find(l=>l.id===s.lessonId)!;return <Card key={s.id} className="space-y-3 p-5"><h2 className="font-semibold">{lesson.name} · Chưa xác nhận đúng hạn 24 giờ</h2><p className="text-sm">{formatDate(s.startsAt)} · Buổi học chưa được mở.</p><p className="text-xs text-amber-800">{Date.parse(s.startsAt)-now<43200000?"Đã vượt mốc thông báo 12 giờ; cần xử lý khẩn cấp.":"Cần quyết định và thông báo học viên trước buổi học ít nhất 12 giờ."}</p><Button asChild variant="outline"><Link href={`/admin/classes/${lesson.classId}`}>Đổi giảng viên / xem lớp</Link></Button><AdminMakeup lessonId={lesson.id}/></Card>;}) : <EmptyState title="Không có cảnh báo xác nhận" description="Các buổi chưa xác nhận sau hạn 24 giờ sẽ xuất hiện tại đây." /> : rows.length?rows.map(r=>{const course=state.classes.find(c=>c.id===r.classId);return <Card key={r.id} className="space-y-3 p-5"><div className="flex flex-wrap justify-between gap-2"><h2 className="text-lg font-semibold">{r.title}</h2><span className="text-xs font-medium text-primary">{r.status==="waiting"?"Chờ duyệt":r.status==="approved"?"Đã duyệt":r.status==="declined"?"Đã từ chối":"Đã hủy"}</span></div><p className="text-sm text-muted-foreground">{course?.name} · {state.users.find(u=>u.id===r.senderId)?.name}</p><details className="dashboard-details"><summary className="text-sm font-medium text-primary">Chi tiết yêu cầu</summary><div className="mt-3 space-y-2 text-sm leading-6"><p>{r.description}</p>{r.proposedStartsAt&&<p>Đề xuất: {formatDate(r.proposedStartsAt)} — {r.proposedEndsAt&&formatDate(r.proposedEndsAt)}</p>}{r.lessonId&&<p>Buổi học: {state.lessons.find(l=>l.id===r.lessonId)?.name}</p>}{r.studentId&&<p>Học viên: {state.users.find(u=>u.id===r.studentId)?.name}</p>}{r.resolutionReason&&<p>Lý do phản hồi: {r.resolutionReason}</p>}<p>Gửi lúc {formatDate(r.createdAt)}</p></div></details>{r.status==="waiting"&&<div className="flex flex-wrap gap-2"><Button onClick={()=>{setReasonValue("");setSelected({id:r.id,approved:true});}}>Approve</Button><Button variant="outline" onClick={()=>{setReasonValue("");setSelected({id:r.id,approved:false});}}>Reject</Button></div>}</Card>;}) : <EmptyState title="Không có yêu cầu phù hợp" description="Yêu cầu lịch, xin nghỉ giảng viên và sửa điểm danh sẽ xuất hiện tại đây." />}
- <Dialog title={selected?.approved?"Phê duyệt yêu cầu?":"Từ chối yêu cầu?"} description={request?.title??"Xem xét yêu cầu mô phỏng"} open={!!selected} onOpenChange={open=>{if(!open)setSelected(null);}}><ActionForm onCancel={()=>setSelected(null)} submitLabel="Xác nhận quyết định" onSubmit={async data=>{if(!selected||!request)return;const reason=String(data.get("reason")??"");await run(account("admin").id,request.kind==="attendance-correction"?{type:"decideAttendanceCorrection",requestId:request.id,approved:selected.approved,reason}:{type:"decideSchedule",requestId:request.id,approved:selected.approved,reason});setSelected(null);setMessage("Đã xử lý yêu cầu và đồng bộ thông báo giữa các vai trò.");}}><Field label={selected?.approved?"Ghi chú":"Lý do từ chối *"}><textarea name="reason" value={reasonValue} onChange={e=>setReasonValue(e.target.value)} required={!selected?.approved} className="form-control" maxLength={1000}/></Field></ActionForm></Dialog></div>;
-}
-
-function AdminMakeup({lessonId}:{lessonId:string}) {
- const {account,run}=useLms();const [open,setOpen]=useState(false);const [start,setStart]=useState("");const [end,setEnd]=useState("");const [reason,setReason]=useState("");
- return <><Button variant="outline" onClick={()=>setOpen(true)}>Hủy buổi chưa xác nhận và tạo lịch bù</Button><Dialog open={open} onOpenChange={setOpen} title="Xử lý buổi chưa xác nhận" description="Giữ nguyên tổng số buổi. Lịch bù vẫn cần giảng viên xác nhận trước ít nhất 24 giờ."><ActionForm onCancel={()=>setOpen(false)} submitLabel="Xác nhận lịch bù" onSubmit={async data=>{await run(account("admin").id,{type:"resolveUnconfirmed",lessonId,startsAt:new Date(String(data.get("start"))+":00+07:00").toISOString(),endsAt:new Date(String(data.get("end"))+":00+07:00").toISOString(),reason:String(data.get("reason"))});setOpen(false);}}><Field label="Bắt đầu lịch bù (UTC+7) *"><input type="datetime-local" name="start" value={start} onChange={e=>setStart(e.target.value)} required className="form-control"/></Field><Field label="Kết thúc lịch bù (UTC+7) *"><input type="datetime-local" name="end" value={end} onChange={e=>setEnd(e.target.value)} required className="form-control"/></Field><Field label="Lý do *"><textarea name="reason" value={reason} onChange={e=>setReason(e.target.value)} required className="form-control"/></Field></ActionForm></Dialog></>;
+    const { services, write } = useApiData(), [page, setPage] = useState(1), [message, setMessage] = useState('');
+    const [selected, setSelected] = useState<{ proposal: PendingProposal; approve: boolean } | null>(null);
+    const resource = useApiResource('schedule-queue:' + page, s => s.sessions.pending(page));
+    return <div className="dashboard-page space-y-6">
+        <PageHeader title="Duyệt lịch học" description="Duyệt hoặc từ chối đề xuất của Manager. Lịch đã duyệt giữ hiệu lực khi thay đổi còn chờ hoặc bị từ chối." actions={<Button variant="outline" onClick={() => void resource.refresh()}>Làm mới</Button>} />
+        <Feedback message={message} /><ResourceFeedback resource={resource} />
+        {resource.data && <>
+            {resource.data.items.map(row => <Card key={row.id} className="space-y-4 p-5">
+                <h2 className="text-lg font-semibold">{row.title} · Buổi {row.session_number}</h2>
+                <p className="text-sm">Lớp #{row.class_id} · Đề xuất #{row.id} · Người gửi #{row.proposed_by}</p>
+                <p className="text-sm">{formatApiDate(row.starts_at)} — {formatApiDate(row.ends_at)} (Việt Nam)</p>
+                <p className="text-sm">Gửi lúc {formatApiDate(row.created_at)}</p>
+                <div className="flex flex-wrap gap-2">
+                    <Button asChild variant="outline"><Link href={detailHref('admin', String(row.class_id), undefined, 'lessons') + '&sessionId=' + row.session_id}>Xem lịch hiện tại và chi tiết</Link></Button>
+                    <Button onClick={() => setSelected({ proposal: row, approve: true })}>Phê duyệt</Button>
+                    <Button variant="outline" onClick={() => setSelected({ proposal: row, approve: false })}>Từ chối</Button>
+                </div>
+            </Card>)}
+            {!resource.data.items.length && <EmptyState title="Không có lịch chờ duyệt" description="Đề xuất đã xử lý được giữ trong lịch sử buổi học của lớp." />}
+            <Pagination {...resource.data} onPage={setPage} />
+        </>}
+        <Dialog open={!!selected} onOpenChange={open => { if (!open) setSelected(null); }} title={selected?.approve ? 'Phê duyệt lịch?' : 'Từ chối lịch?'} description={selected?.proposal.title ?? 'Xem xét đề xuất lịch'}>
+            <ActionForm key={selected?.proposal.id + '-' + selected?.approve} submitLabel="Xác nhận quyết định" onCancel={() => setSelected(null)} onSubmit={async form => {
+                if (!selected) return;
+                const row = selected.proposal;
+                await write(async () => (await services).sessions.review(row.class_id, row.session_id, row.id, selected.approve ? 'approve' : 'reject', String(form.get('reason') ?? '')));
+                setSelected(null);
+                setMessage('Đã xử lý đề xuất lịch và làm mới dữ liệu.');
+            }}>
+                {selected?.approve ? <p className="text-sm leading-6">Lịch mới sẽ có hiệu lực sau khi được duyệt. Hệ thống kiểm tra lại thời gian và trạng thái đề xuất.</p> : <Field label="Lý do từ chối *"><textarea name="reason" required maxLength={2000} className="form-control" /></Field>}
+            </ActionForm>
+        </Dialog>
+    </div>;
 }
