@@ -1,2 +1,2 @@
-import { redirect } from "next/navigation";
-export default function Home() { redirect("/admin"); }
+import { PublicJourney } from '@/features/auth/public-journey';
+export default function Home() { return <PublicJourney />; }

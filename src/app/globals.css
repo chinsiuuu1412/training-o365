@@ -6,7 +6,7 @@
   --card: #fff;
   --primary: #2563eb;
   --primary-foreground: #fff;
-  --muted-foreground: #64748b;
+  --muted-foreground: #596a81;
   --border: #e2e8f0;
   --navy: #0b1f3a;
 }
@@ -22,7 +22,13 @@
   --font-sans: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.public-page { position: relative; isolation: isolate; overflow-x: clip; }
+.public-page::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background: radial-gradient(ellipse at 85% 20%, rgb(15 118 110 / .16), transparent 65%); animation: public-breathe 7s ease-in-out infinite alternate; }
+.public-intro { animation: dashboard-in 220ms ease-out; }
+.public-page :focus-visible { outline-color: #5eead4; }
+.public-page input:focus-visible, .public-page select:focus-visible { outline-color: #0f766e; }
+@keyframes public-breathe { from { opacity: .5; } to { opacity: 1; } }
 button, select, a { -webkit-tap-highlight-color: transparent; }
 button:not(:disabled), select { cursor: pointer; }
 :focus-visible { outline: 3px solid #3b82f6; outline-offset: 3px; }
@@ -38,9 +44,30 @@ button:not(:disabled), select { cursor: pointer; }
 .dashboard-details summary { cursor: pointer; border-radius: 4px; overflow-wrap: anywhere; transition: color 160ms ease; }
 .dashboard-details summary:hover { color: #1d4ed8; }
 .dashboard-details[open] > summary { color: #1d4ed8; }
-.dashboard-page p, .dashboard-page h2, .dashboard-page h3 { overflow-wrap: anywhere; }
-.form-control { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: white; font-size: 14px; font-weight: 400; color: var(--foreground); }
+.dashboard-page p, .dashboard-page h1, .dashboard-page h2, .dashboard-page h3 { overflow-wrap: anywhere; }
+.form-control { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #94a3b8; border-radius: 8px; padding: 10px 12px; background: white; font-size: 14px; line-height: 1.5; font-weight: 400; color: var(--foreground); transition: border-color 180ms ease, box-shadow 180ms ease; }
+.form-control:hover:not(:disabled) { border-color: #64748b; }
+.form-control:focus-visible { border-color: var(--primary); }
+.form-control[aria-invalid="true"], .form-control:user-invalid { border-color: #b91c1c; }
+.form-control:disabled { background: #f1f5f9; color: #475569; cursor: not-allowed; }
+.form-control::placeholder { color: #64748b; opacity: 1; }
+textarea.form-control { resize: vertical; }
+.data-table tbody tr { transition: background-color 180ms ease; }
+.data-table tbody tr:hover, .data-table tbody tr:focus-within { background: #f8fafc; }
+.management-dialog { overflow-wrap: anywhere; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.drawer-panel { overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom); }
+.loading-skeleton { animation: skeleton-pulse 1800ms ease-in-out infinite; background: #e2e8f0; }
+progress { appearance: none; overflow: hidden; border: 0; border-radius: 9999px; background: #e2e8f0; vertical-align: middle; }
+progress::-webkit-progress-bar { border-radius: 9999px; background: #e2e8f0; }
+progress::-webkit-progress-value { border-radius: 9999px; background: var(--primary); transition: width 200ms ease-out; }
+progress::-moz-progress-bar { border-radius: 9999px; background: var(--primary); transition: width 200ms ease-out; }
+@keyframes skeleton-pulse { 50% { opacity: .55; } }
+@media (pointer: coarse) {
+  .form-control { font-size: 16px; }
+  button, a[role="button"] { min-height: 44px; }
+}
 .management-dialog { animation: overlay-in 180ms ease-out; }
+.toast-message { animation: dashboard-in 200ms ease-out; }
 .assessment-focused > div > header { height: 64px; }
 .assessment-focused > div > header button,
 .assessment-focused > div > header > div:last-child,
