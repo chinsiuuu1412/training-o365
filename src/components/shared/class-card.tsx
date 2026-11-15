@@ -1,5 +1,5 @@
 import { BookOpen, CalendarDays, Users } from "lucide-react";
-import type { ClassRow } from "@/mocks/services/dashboard";
+interface ClassCardData { id:string;name:string;code:string;color:string;manager:{name:string};students:number;capacity:number;completedLessons:number;totalLessons:number;expiresAt:string;description?:string }
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ProgressTrack } from "./progress-track";
@@ -7,12 +7,12 @@ import { StatusBadge } from "./status-badge";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-export function ClassCard({ course, registered = false, href, actions, expired = false }: { course: ClassRow; registered?: boolean; href?: string; actions?: ReactNode; expired?: boolean }) {
+export function ClassCard({ course, registered = false, href, actions, expired = false }: { course: ClassCardData; registered?: boolean; href?: string; actions?: ReactNode; expired?: boolean }) {
   return <Card className="dashboard-card min-w-0 p-5 sm:p-6">
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><span className={`course-icon course-${course.color}`}><BookOpen size={20} /></span><StatusBadge status={expired ? "expired" : registered ? "registered" : "active"} /></div>
     <p className="text-xs font-medium tracking-wide text-muted-foreground">{course.code}</p>
     <h3 className="mt-1 text-base font-semibold leading-6">{course.name}</h3>
-    <p className="mt-2 text-sm text-muted-foreground">{course.teacher.name}</p>
+    <p className="mt-2 text-sm text-muted-foreground">{course.manager.name}</p>
     <div className="my-4 flex items-center gap-2 text-xs text-slate-600"><Users size={15} aria-hidden="true" />{course.students}/{course.capacity} học viên</div>
     <p className="mb-2 text-xs font-medium">{registered ? "Nội dung đã giảng" : "Tiến độ giảng dạy"} · {course.completedLessons}/{course.totalLessons} buổi</p>
     <ProgressTrack value={course.totalLessons ? Math.round(course.completedLessons / course.totalLessons * 100) : 0} label={`Giảng dạy · ${course.name}`} />
@@ -20,7 +20,7 @@ export function ClassCard({ course, registered = false, href, actions, expired =
       <summary className="text-sm font-medium text-primary">Xem chi tiết lớp {course.name}</summary>
       <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
         <p className="flex items-start gap-2"><CalendarDays size={16} className="mt-1 shrink-0" />Hết hạn: {new Date(`${course.expiresAt}T00:00:00+07:00`).toLocaleDateString("vi-VN", { timeZone: "Asia/Bangkok" })}</p>
-        <p>{course.description}</p><p>{course.totalLessons ? `${course.totalLessons} buổi học cố định.` : "Chờ giảng viên thiết lập số buổi."} Attendance và Quiz được theo dõi riêng.</p>
+        <p>{course.description}</p><p>{course.totalLessons ? `${course.totalLessons} buổi học cố định.` : "Chờ quản lý lớp thiết lập số buổi."} Attendance và Quiz được theo dõi riêng.</p>
         {!href && <p className="text-xs">Mở lớp từ danh sách quản lý lớp học.</p>}
       </div>
     </details>
