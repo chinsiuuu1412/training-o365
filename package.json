@@ -5,11 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build && node --input-type=module -e \"import {writeFileSync} from 'node:fs';writeFileSync('out/.nojekyll','')\"",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/dashboard.test.ts tests/management.test.ts tests/lessons.test.ts tests/quizzes.test.ts tests/library-communications.test.ts tests/progress-certificates.test.ts"
+    "test": "node --experimental-strip-types --test tests/api-communications.test.ts tests/api-quizzes.test.ts tests/api-sessions.test.ts tests/api-management.test.ts tests/api-enrollments.test.ts tests/api-dashboard.test.ts tests/api-client.test.ts tests/api-auth.test.ts tests/static-routes.test.ts tests/enrollment-cycles.test.ts tests/auth.test.ts tests/dashboard.test.ts tests/management.test.ts tests/lessons.test.ts tests/quizzes.test.ts tests/library-communications.test.ts tests/progress-certificates.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
