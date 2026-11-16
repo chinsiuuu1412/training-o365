@@ -1,0 +1,59 @@
+# Drafted architecture
+
+**Note**: This architecture is incomplete & for initial references. Its sole purpose is for initial generation of the final ARCHITECTURE.md file.
+Agents will read ARCHITECTURE.md files for official instructions & planned architecture and will solely rely on that to implement
+
+## Basics
+The app should be a functional Learning Management System. Basics include:
+- Account & Permission handling: 3 types of accounts 
+  - Admin, Class Manager, Student. Each has their own features, frontend views, permission & data access
+- Final product simulates 100 students, across 3 classes, 1 admin
+
+## Admin
+- Create & manage student, class manager accounts
+- Create & manage classes: 
+  - Set class's name
+  - Starting & ending date (after that, the class is archived & students, class managers can no longer access & view class details & materials),
+  - Assign class manager account to the class
+  - define class's completion criteria
+- Update timetable for classes, approve class manager's request for timetable changes
+- Send announcements to selected classes/students
+
+## Class manager
+- Dashboard to view & manage students 
+  - Student's info, 
+  - Attended lessons 
+  - Quiz results: points, time spent for each quiz
+  - Course completion progress (marked by defined criteria for the class))
+- Post & update course materials (slides, reference materials, ...)
+- Create & manage quiz:
+  - Add & edit questions
+  - Set quiz deadline & duration
+  - View quiz leaderboard, sorted by: names, points, time spent, pass/fail. Both ascending & descending. To reduce workload for the database, query & update results for every small window of time, real-time updating is not needed.
+  - 2 types of quiz:
+    - Test: Only 1 attempt, restrict tab-switching behavior during the test (count the amount of violations). Submissions are only allowed after 2/3 of duration passed. Class managers can allow the student to retake the test if needed.
+	- Homework: Unlimited attempts. No passed-time restriction for submissions. No tab-switching restriction. Record all submissions & consider the attempt with highest point & lowest time spent as the final result.
+  - In this MVP, only multiple choice questions with automated grading is supported
+  - Create & manage session:
+    - Assign a date to the session & wait for admin approval -> Timetable updates
+	- Change assigned date & wait for admin approval -> Timetable updates
+	- Generate attendance checking code for the session. Select/create post-session quiz
+	- View student's photo proofs (an image including their face with the class's background) & approve attendance for the session
+	- Post the session's videos so students who missed the class can watch
+    - The class manager reserves the right to revoke/approve attendance status of any current/previous session.
+  - Send announcements to students (can select which students receive the announcement)
+  - Manage class's enrollment: Enroll/kick student from class, approve leaving requests from students)
+  - Documents, videos should be stored on 3rd-party services because of limited hardware resources
+
+## Students
+- Homepage: View this week's timetable
+- List of enrolled classes, find classes by name
+- Class enrollment inbox: Shows an invitation if the class manager invites
+- In each class:
+  - Dashboard to view the class's progress: Track points, finished quiz, results, attended sessions, course completion progress, deadlines
+  - View sessions: Attendance status (attended, awaiting approval, missed, watched session's video).
+    **Note**: Watched session's video is a special state. It means the student missed the class, but watched the session's video online after the session & completed the post-session quiz
+	Most of the time, it has the same value as approved, but is still categorized for transparancy
+  - View quiz: Done quiz (with questions & answers if allowed by the class manager), available quiz, near deadline quiz
+  - Access class's materials
+  - Danger zone: Leave class. Need reason & approval from class manager before leaving
